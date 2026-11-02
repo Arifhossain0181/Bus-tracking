@@ -4,16 +4,18 @@ djangorestframework>=3.14.0
 django-cors-headers>=4.3.0
 Pillow>=10.0.0
 
-# Database
-psycopg2-binary>=2.9.9
-dj-database-url>=2.1.0
-
-# Environment variables
-python-dotenv>=1.0.0
-python-decouple>=3.8
+# Database (optional - for production)
+# psycopg2-binary>=2.9.9  # PostgreSQL
+# mysqlclient>=2.2.0      # MySQL
+dj-database-url>=1.0.0
 
 # Development utilities
+python-decouple>=3.8
 django-extensions>=3.2.3
+
+# PDF Generation
+reportlab>=4.0.0
+xhtml2pdf>=0.2.11
 
 # Testing
 pytest>=7.4.0
@@ -22,3 +24,9 @@ pytest-django>=4.5.0
 # Production server
 gunicorn>=21.2.0
 whitenoise>=6.6.0
+python-dotenv>=1.0.0
+
+# Cloudinary Integration
+cloudinary>=1.38.0
+django-cloudinary-storage>=0.3.0
+psycopg2-binary>=2.9.0
