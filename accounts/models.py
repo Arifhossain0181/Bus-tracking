@@ -1,24 +1,31 @@
+import os
 from django.db.models.signals import post_migrate
 from django.dispatch import receiver
 
-# Automatically create default admin and authority users after migrations (for Render, free tier)
+# Automatically create default admin and authority users after migrations (if env vars set)
 @receiver(post_migrate)
 def create_default_users(sender, **kwargs):
     from accounts.models import User
-    if not User.objects.filter(username='admin').exists():
+    admin_password = os.environ.get('DJANGO_SUPERUSER_PASSWORD')
+    if admin_password and not User.objects.filter(username='admin').exists():
+        admin_username = os.environ.get('DJANGO_SUPERUSER_USERNAME', 'admin')
+        admin_email = os.environ.get('DJANGO_SUPERUSER_EMAIL', 'admin@example.com')
         User.objects.create_superuser(
-            username='admin',
-            email='admin@example.com',
-            password='admin123',
+            username=admin_username,
+            email=admin_email,
+            password=admin_password,
             role='admin',
             is_active=True,
             approval_status='approved'
         )
-    if not User.objects.filter(username='authority').exists():
+    authority_password = os.environ.get('DEFAULT_AUTHORITY_PASSWORD')
+    if authority_password and not User.objects.filter(username='authority').exists():
+        auth_username = os.environ.get('DEFAULT_AUTHORITY_USERNAME', 'authority')
+        auth_email = os.environ.get('DEFAULT_AUTHORITY_EMAIL', 'authority@example.com')
         User.objects.create_user(
-            username='authority',
-            email='authority@example.com',
-            password='authority123',
+            username=auth_username,
+            email=auth_email,
+            password=authority_password,
             role='authority',
             is_active=True,
             approval_status='approved'
