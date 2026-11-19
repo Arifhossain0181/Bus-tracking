@@ -1,12 +1,16 @@
 from django.contrib.auth import authenticate
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.authtoken.models import Token
-from rest_framework.decorators import api_view, permission_classes, parser_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes, throttle_classes
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+
+from core.throttling import AuthRateThrottle
 
 from .models import User
 from .models_feedback import Feedback
@@ -19,6 +23,7 @@ from notifications.models import Notification
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([AuthRateThrottle])
 def login_api(request):
     username = (request.data.get('username') or '').strip()
     password = request.data.get('password') or ''
@@ -60,12 +65,13 @@ def login_api(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([AuthRateThrottle])
 def register_api(request):
     serializer = RegisterSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
         return Response({
-            'message': 'Registration submitted! Please wait for admin approval. You can login using your username and University ID.',
+            'message': 'Registration submitted! Please wait for admin approval before logging in.',
             'user': UserSerializer(user, context={'request': request}).data
         }, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -101,6 +107,17 @@ def profile_api(request):
 
     if 'profile_picture' in request.FILES:
         user.profile_picture = request.FILES['profile_picture']
+
+    new_password = request.data.get('new_password')
+    if new_password:
+        current_password = request.data.get('current_password')
+        if not current_password or not user.check_password(current_password):
+            return Response({'error': 'Current password is incorrect.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            validate_password(new_password, user=user)
+        except DjangoValidationError as err:
+            return Response({'error': err.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+        user.set_password(new_password)
 
     user.save()
     return Response({
@@ -236,6 +253,12 @@ def user_list_create_api(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
+    try:
+        temp_user = User(username=username)
+        validate_password(password, user=temp_user)
+    except DjangoValidationError as err:
+        return Response({'error': err.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+
     parts = full_name.split(' ', 1)
     user = User.objects.create_user(
         username=username,
@@ -368,6 +391,12 @@ def driver_list_create_api(request):
             {'error': f'Username "{username}" is already taken.'},
             status=status.HTTP_400_BAD_REQUEST
         )
+
+    try:
+        temp_user = User(username=username)
+        validate_password(password, user=temp_user)
+    except DjangoValidationError as err:
+        return Response({'error': err.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
 
     parts = full_name.split(' ', 1)
     driver = User.objects.create_user(

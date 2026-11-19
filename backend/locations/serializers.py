@@ -1,3 +1,4 @@
+from decimal import Decimal
 from rest_framework import serializers
 from .models import DriverLocation
 
@@ -37,3 +38,42 @@ class LocationUpdateSerializer(serializers.Serializer):
     accuracy = serializers.FloatField(required=False, allow_null=True)
     heading = serializers.FloatField(required=False, allow_null=True)
     speed = serializers.FloatField(required=False, allow_null=True)
+
+    def validate_latitude(self, value):
+        if value < Decimal('-90.0') or value > Decimal('90.0'):
+            raise serializers.ValidationError('Latitude must be between -90 and 90 degrees.')
+        return value
+
+    def validate_longitude(self, value):
+        if value < Decimal('-180.0') or value > Decimal('180.0'):
+            raise serializers.ValidationError('Longitude must be between -180 and 180 degrees.')
+        return value
+
+    def validate_speed(self, value):
+        if value is not None:
+            if value < 0:
+                raise serializers.ValidationError('Speed cannot be negative.')
+            if value > 150:  # ~540 km/h realistic upper bound
+                raise serializers.ValidationError('Speed exceeds realistic ground vehicle limits (max 150 m/s).')
+        return value
+
+    def validate_heading(self, value):
+        if value is not None:
+            if value < 0 or value > 360:
+                raise serializers.ValidationError('Heading must be between 0 and 360 degrees.')
+        return value
+
+    def validate_accuracy(self, value):
+        if value is not None:
+            if value < 0:
+                raise serializers.ValidationError('Accuracy cannot be negative.')
+            if value > 5000:
+                raise serializers.ValidationError('GPS accuracy error exceeds acceptable range (>5000m).')
+        return value
+
+    def validate(self, attrs):
+        lat = attrs.get('latitude')
+        lng = attrs.get('longitude')
+        if lat == Decimal('0') and lng == Decimal('0'):
+            raise serializers.ValidationError('Invalid coordinates: Null Island (0, 0) is rejected.')
+        return attrs

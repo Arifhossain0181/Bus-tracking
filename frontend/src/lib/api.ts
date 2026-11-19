@@ -1,8 +1,8 @@
 export class ApiError extends Error {
   status?: number;
-  data?: any;
+  data?: unknown;
 
-  constructor(message: string, status?: number, data?: any) {
+  constructor(message: string, status?: number, data?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
@@ -39,7 +39,7 @@ interface ApiFetchOptions extends RequestInit {
   skipAuth?: boolean;
 }
 
-export async function apiFetch<T = any>(
+export async function apiFetch<T = unknown>(
   endpoint: string,
   options: ApiFetchOptions = {}
 ): Promise<T> {
@@ -72,19 +72,25 @@ export async function apiFetch<T = any>(
 
   if (!response.ok) {
     let errorMessage = `Request failed with status ${response.status}`;
-    let errorData: any = null;
+    let errorData: Record<string, unknown> | string | null = null;
 
     try {
       errorData = await response.json();
       if (typeof errorData === 'string') {
         errorMessage = errorData;
       } else if (errorData) {
-        if (errorData.error) {
+        if (typeof errorData.error === 'string') {
           errorMessage = errorData.error;
-        } else if (errorData.detail) {
+        } else if (typeof errorData.detail === 'string') {
           errorMessage = errorData.detail;
-        } else if (errorData.message) {
+        } else if (typeof errorData.message === 'string') {
           errorMessage = errorData.message;
+        } else if (errorData.error) {
+          errorMessage = String(errorData.error);
+        } else if (errorData.detail) {
+          errorMessage = String(errorData.detail);
+        } else if (errorData.message) {
+          errorMessage = String(errorData.message);
         } else {
           // If serializer error dict (e.g. { username: ["This field is required"] })
           const firstKey = Object.keys(errorData)[0];

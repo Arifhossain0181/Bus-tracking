@@ -45,6 +45,7 @@ export interface BusLocation {
   longitude: number | string;
   speed?: number | string | null;
   heading?: number | string | null;
+  is_accurate?: boolean;
   timestamp: string;
 }
 
@@ -91,6 +92,19 @@ export interface Bus {
   current_trip?: number | null;
   latest_location?: BusLocation | null;
   active_assignment?: BusAssignment | null;
+  active_journey?: {
+    id: number;
+    driver_id: number;
+    driver_name: string;
+    status: 'active' | 'completed' | 'aborted';
+    start_time?: string | null;
+  } | null;
+  latest_journey?: {
+    id: number;
+    status: 'active' | 'completed' | 'aborted';
+    start_time?: string | null;
+    end_time?: string | null;
+  } | null;
   recent_locations?: BusLocation[];
   recent_assignments?: BusAssignment[];
   current_route_trips?: BusTripSummary[];
@@ -188,6 +202,7 @@ export interface ActiveDriverLocation {
   speed?: number | null;
   last_updated: string;
   is_active: boolean;
+  bus_id?: number;
   bus_number?: string;
   route_name?: string;
   route_id?: number;

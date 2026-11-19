@@ -1,10 +1,12 @@
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
+from core.throttling import TelemetryRateThrottle
 from .models import DriverLocation, LocationHistory
 from .serializers import DriverLocationSerializer, LocationUpdateSerializer
+from .services import record_driver_gps
 from buses.models import Journey, BusAssignment
 from notifications.models import Notification
 
@@ -125,8 +127,9 @@ def end_journey(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@throttle_classes([TelemetryRateThrottle])
 def update_location(request):
-    """Update driver's live location during active journey."""
+    """Update driver's live location during active journey and sync to bus."""
     if request.user.role != 'driver':
         return Response(
             {'error': 'Only drivers can share location'}, 
@@ -146,32 +149,18 @@ def update_location(request):
     
     data = serializer.validated_data
     
-    # Update or create driver location
-    location, created = DriverLocation.objects.update_or_create(
-        driver=request.user,
-        defaults={
-            'latitude': data['latitude'],
-            'longitude': data['longitude'],
-            'accuracy': data.get('accuracy'),
-            'heading': data.get('heading'),
-            'speed': data.get('speed'),
-            'is_sharing': True,
-            'journey': journey
-        }
-    )
-    
-    # Store in history for analytics
-    LocationHistory.objects.create(
-        driver=request.user,
-        latitude=data['latitude'],
-        longitude=data['longitude']
-    )
-    
-    return Response({
-        'status': 'success',
-        'message': 'Location updated',
-        'timestamp': location.last_updated.isoformat()
-    })
+    try:
+        result = record_driver_gps(
+            driver=request.user,
+            latitude=data['latitude'],
+            longitude=data['longitude'],
+            accuracy=data.get('accuracy'),
+            heading=data.get('heading'),
+            speed=data.get('speed'),
+        )
+        return Response(result)
+    except ValueError as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['POST'])
@@ -213,9 +202,12 @@ def get_active_locations(request):
         }
         
         if loc.journey:
-            data['bus_number'] = loc.journey.bus.bus_number
-            data['route_name'] = loc.journey.route.name
-            data['route_id'] = loc.journey.route.id
+            if loc.journey.bus:
+                data['bus_id'] = loc.journey.bus.id
+                data['bus_number'] = loc.journey.bus.bus_number
+            if loc.journey.route:
+                data['route_name'] = loc.journey.route.name
+                data['route_id'] = loc.journey.route.id
             data['journey_id'] = loc.journey.id
             data['journey_start'] = loc.journey.start_time.isoformat()
         

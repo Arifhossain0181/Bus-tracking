@@ -147,7 +147,7 @@ function LoginForm() {
       <div className="bg-slate-100/90 border-b border-slate-200/80 px-4 py-2.5 flex items-center justify-between text-xs text-slate-600 overflow-x-auto gap-1">
         <span className="text-[11px] font-medium text-slate-500 shrink-0">Switch:</span>
         <div className="flex gap-1">
-          {Object.entries(ROLE_INFO).map(([key, info]) => {
+          {Object.entries(ROLE_INFO).map(([key]) => {
             const isActive = roleParam === key;
             return (
               <button
