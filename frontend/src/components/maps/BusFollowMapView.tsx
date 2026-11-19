@@ -63,7 +63,6 @@ export default function BusFollowMapView({
       polylineRef.current = null;
       centeredOnceRef.current = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Center / Recenter map handler
