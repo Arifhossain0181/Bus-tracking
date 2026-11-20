@@ -15,6 +15,7 @@ echo "[2/4] Updating Backend (Dependencies, Migrations, Static)..."
 cd /home/dsriubatac/Bus-tracking/backend
 source venv/bin/activate
 pip install -r requirements.txt --quiet
+python manage.py makemigrations --noinput
 python manage.py migrate --noinput
 python manage.py collectstatic --noinput
 
