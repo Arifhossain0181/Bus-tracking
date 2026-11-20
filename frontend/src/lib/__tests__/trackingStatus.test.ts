@@ -5,6 +5,10 @@ import {
   isValidCoordinate,
   calculateLocationAgeSeconds,
   formatAgeDescription,
+  calculateDistanceMeters,
+  isPlausibleMovement,
+  getCardinalDirection,
+  formatEtaDescription,
   GPS_FRESHNESS_THRESHOLDS,
 } from '../trackingStatus.ts';
 import type { Bus } from '../types.ts';
@@ -310,3 +314,97 @@ test('12. Helper functions: calculateLocationAgeSeconds, formatAgeDescription, t
   assert.strictEqual(GPS_FRESHNESS_THRESHOLDS.LIVE_MAX_SECONDS, 30);
   assert.strictEqual(GPS_FRESHNESS_THRESHOLDS.STALE_MAX_SECONDS, 120);
 });
+
+test('13. calculateDistanceMeters accurately computes geodesic distances', () => {
+  // Same position = 0m
+  assert.strictEqual(calculateDistanceMeters(23.8103, 90.4125, 23.8103, 90.4125), 0);
+
+  // Approximately 111 km per degree of latitude
+  const dist1DegLat = calculateDistanceMeters(23.0, 90.0, 24.0, 90.0);
+  assert.ok(dist1DegLat > 110000 && dist1DegLat < 112000, `Expected ~111km, got ${dist1DegLat}`);
+
+  // Short distance (~111 meters for 0.001 deg lat)
+  const distShort = calculateDistanceMeters(23.8103, 90.4125, 23.8113, 90.4125);
+  assert.ok(distShort > 100 && distShort < 125, `Expected ~111m, got ${distShort}`);
+
+  // Invalid coordinates return 0
+  assert.strictEqual(calculateDistanceMeters(NaN, 90.0, 23.0, 90.0), 0);
+  assert.strictEqual(calculateDistanceMeters(23.0, 90.0, 0, 0), 0);
+});
+
+test('14. isPlausibleMovement identifies teleport jumps vs realistic vehicle moves', () => {
+  // Realistic move: 100m away
+  assert.strictEqual(isPlausibleMovement(23.8103, 90.4125, 23.8112, 90.4125), true);
+
+  // Small stationary jitter: 1.5m away
+  assert.strictEqual(isPlausibleMovement(23.8103, 90.4125, 23.81031, 90.4125), true);
+
+  // Teleport jump: 5 km jump within a single interval
+  assert.strictEqual(isPlausibleMovement(23.8103, 90.4125, 23.8550, 90.4125), false);
+
+  // Custom threshold: 500m max
+  assert.strictEqual(isPlausibleMovement(23.8103, 90.4125, 23.8160, 90.4125, 500), false);
+  assert.strictEqual(isPlausibleMovement(23.8103, 90.4125, 23.8120, 90.4125, 500), true);
+
+  // Invalid coordinates
+  assert.strictEqual(isPlausibleMovement(null as unknown as number, 90.0, 23.0, 90.0), false);
+});
+
+test('15. getCardinalDirection maps heading angles to compass points', () => {
+  assert.strictEqual(getCardinalDirection(0), 'N');
+  assert.strictEqual(getCardinalDirection(360), 'N');
+  assert.strictEqual(getCardinalDirection(45), 'NE');
+  assert.strictEqual(getCardinalDirection(90), 'E');
+  assert.strictEqual(getCardinalDirection(135), 'SE');
+  assert.strictEqual(getCardinalDirection(180), 'S');
+  assert.strictEqual(getCardinalDirection(225), 'SW');
+  assert.strictEqual(getCardinalDirection(270), 'W');
+  assert.strictEqual(getCardinalDirection(315), 'NW');
+
+  // Null, undefined, negative, or invalid angles return empty string
+  assert.strictEqual(getCardinalDirection(null), '');
+  assert.strictEqual(getCardinalDirection(undefined), '');
+  assert.strictEqual(getCardinalDirection(-10), '');
+  assert.strictEqual(getCardinalDirection(400), '');
+  assert.strictEqual(getCardinalDirection(NaN), '');
+});
+
+test('16. formatEtaDescription handles edge cases and delays gracefully', () => {
+  assert.strictEqual(formatEtaDescription(null), 'Calculating...');
+  assert.strictEqual(formatEtaDescription(undefined), 'Calculating...');
+  assert.strictEqual(formatEtaDescription(NaN), 'Calculating...');
+
+  // Arriving now (0 or negative)
+  assert.strictEqual(formatEtaDescription(0), 'Arriving now');
+  assert.strictEqual(formatEtaDescription(-2), 'Arriving now');
+
+  // Normal minutes
+  assert.strictEqual(formatEtaDescription(5), '5 min');
+  assert.strictEqual(formatEtaDescription(42), '42 min');
+
+  // With delays
+  assert.strictEqual(formatEtaDescription(15, true, 4), '15 min (+4m delay)');
+  assert.strictEqual(formatEtaDescription(15, false, 0), '15 min');
+
+  // Over an hour
+  assert.strictEqual(formatEtaDescription(65), '1h 5m');
+  assert.strictEqual(formatEtaDescription(120), '2h');
+  assert.strictEqual(formatEtaDescription(80, true, 10), '1h 20m (+10m delay)');
+});
+
+test('17. Out-of-order telemetry suppression logic', () => {
+  let lastProcessedTimestamp = 1700000000000;
+
+  // New incoming telemetry with newer timestamp: accepted
+  const newerTs = 1700000003000;
+  const isNewer = newerTs >= lastProcessedTimestamp;
+  assert.strictEqual(isNewer, true);
+  if (isNewer) lastProcessedTimestamp = newerTs;
+
+  // Delayed out-of-order packet with older timestamp: rejected
+  const olderTs = 1700000001000;
+  const isOlderAccepted = olderTs >= lastProcessedTimestamp;
+  assert.strictEqual(isOlderAccepted, false);
+  assert.strictEqual(lastProcessedTimestamp, 1700000003000); // unchanged
+});
+

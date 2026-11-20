@@ -213,6 +213,26 @@ export default function DashboardPage() {
     }
   };
 
+  const handleAbortJourney = async () => {
+    const reason = window.prompt('Please enter reason for aborting journey (e.g. breakdown, emergency):');
+    if (reason === null) return;
+    setDriverErr('');
+    setDriverMsg('');
+    setJourneyBusy(true);
+    try {
+      const res = await apiFetch<{ duration_minutes: number | null }>('/api/locations/journey/abort/', {
+        method: 'POST',
+        body: JSON.stringify({ reason: reason || 'Aborted by driver' }),
+      });
+      setDriverMsg(`Journey aborted (${res.duration_minutes ?? 0} mins). GPS sharing stopped.`);
+      await loadDashboard();
+    } catch (err) {
+      setDriverErr(err instanceof ApiError ? err.message : 'Failed to abort journey.');
+    } finally {
+      setJourneyBusy(false);
+    }
+  };
+
   const handleReportDelay = async (e: React.FormEvent) => {
     e.preventDefault();
     setDriverErr('');
@@ -385,15 +405,27 @@ export default function DashboardPage() {
                     {journeyBusy ? 'Starting...' : 'START JOURNEY'}
                   </button>
                 ) : (
-                  <button
-                    type="button"
-                    disabled={journeyBusy}
-                    onClick={handleEndJourney}
-                    className="w-full py-3 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-bold rounded-xl flex items-center justify-center gap-2"
-                  >
-                    <Square className="w-5 h-5" />
-                    {journeyBusy ? 'Ending...' : 'END JOURNEY'}
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={journeyBusy}
+                      onClick={handleEndJourney}
+                      className="flex-1 py-3 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-bold rounded-xl flex items-center justify-center gap-2"
+                    >
+                      <Square className="w-5 h-5" />
+                      {journeyBusy ? 'Ending...' : 'END JOURNEY'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={journeyBusy}
+                      onClick={handleAbortJourney}
+                      className="px-4 py-3 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white font-bold rounded-xl flex items-center justify-center gap-2"
+                      title="Abort journey due to breakdown or emergency"
+                    >
+                      <AlertTriangle className="w-5 h-5" />
+                      ABORT
+                    </button>
+                  </div>
                 )}
               </>
             ) : (

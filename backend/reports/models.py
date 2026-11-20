@@ -4,13 +4,20 @@ from schedules.models import Route
 from buses.models import Bus
 
 class TripLog(models.Model):
+    journey = models.OneToOneField(
+        'buses.Journey',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='trip_log'
+    )
     bus = models.ForeignKey(Bus, on_delete=models.CASCADE, related_name='trip_logs')
     route = models.ForeignKey(Route, on_delete=models.CASCADE, related_name='trip_logs')
-    driver = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='trip_logs')
+    driver = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='trip_logs')
     date = models.DateField()
-    scheduled_departure = models.TimeField()
+    scheduled_departure = models.TimeField(null=True, blank=True)
     actual_departure = models.TimeField(null=True, blank=True)
-    scheduled_arrival = models.TimeField()
+    scheduled_arrival = models.TimeField(null=True, blank=True)
     actual_arrival = models.TimeField(null=True, blank=True)
     passenger_count = models.PositiveIntegerField(default=0)
     is_completed = models.BooleanField(default=False)
@@ -19,7 +26,13 @@ class TripLog(models.Model):
 
     class Meta:
         db_table = 'trip_logs'
-        ordering = ['-date', '-scheduled_departure']
+        ordering = ['-date', '-created_at']
+        indexes = [
+            models.Index(fields=['date', 'is_completed']),
+            models.Index(fields=['route', 'date']),
+            models.Index(fields=['driver', 'date']),
+            models.Index(fields=['bus', 'date']),
+        ]
 
     def __str__(self):
         return f"{self.route.name} - {self.date}"
@@ -36,7 +49,8 @@ class TripLog(models.Model):
 
     @property
     def is_on_time(self):
-        return self.departure_delay_mins <= 5
+        from .constants import ON_TIME_TOLERANCE_MINUTES
+        return self.departure_delay_mins <= ON_TIME_TOLERANCE_MINUTES
 
 
 class UserFeedback(models.Model):

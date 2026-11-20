@@ -14,132 +14,76 @@ from issues.serializers import IssueSerializer
 from schedules.models import Route
 from .models import TripLog, UserFeedback, RouteAnalytics
 from .serializers import TripLogSerializer, UserFeedbackSerializer, RouteAnalyticsSerializer
-
-
-def _parse_date_range(request, default_days=30):
-    end_date = timezone.now().date()
-    start_date = end_date - timedelta(days=default_days)
-    if request.GET.get('start_date'):
-        try:
-            start_date = datetime.strptime(request.GET['start_date'], '%Y-%m-%d').date()
-        except ValueError:
-            pass
-    if request.GET.get('end_date'):
-        try:
-            end_date = datetime.strptime(request.GET['end_date'], '%Y-%m-%d').date()
-        except ValueError:
-            pass
-    return start_date, end_date
+from .analytics_service import (
+    parse_date_boundaries,
+    get_reports_overview_data,
+    get_route_analytics_data,
+    get_performance_summary_data,
+    get_driver_logs_data,
+)
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def reports_overview_api(request):
+    """
+    Overview operational statistics and route on-time performance summary (last 30 days).
+    Derived from trustworthy, verified operational journey records.
+    """
     if request.user.role not in ['admin', 'authority']:
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
 
-    today = timezone.now().date()
-    last_30_days = today - timedelta(days=30)
-
-    stats = {
-        'total_routes': Route.objects.filter(is_active=True).count(),
-        'total_buses': Bus.objects.filter(is_active=True).count(),
-        'total_drivers': User.objects.filter(role='driver').count(),
-        'active_issues': Issue.objects.filter(status='pending').count(),
-        'total_trips_30d': RouteAnalytics.objects.filter(date__gte=last_30_days).aggregate(total=Sum('total_trips'))['total'] or 0,
-    }
+    overview_data = get_reports_overview_data(days=30)
 
     recent_issues = Issue.objects.select_related('reported_by', 'bus', 'route').order_by('-created_at')[:10]
-    route_perf_qs = RouteAnalytics.objects.filter(
-        date__gte=last_30_days
-    ).values('route__name').annotate(
-        total_trips=Sum('total_trips'),
-        on_time_trips=Sum('on_time_trips')
-    ).order_by('-total_trips')[:10]
-
-    route_performance = []
-    for rp in route_perf_qs:
-        total = rp.get('total_trips') or 0
-        on_time = rp.get('on_time_trips') or 0
-        route_performance.append({
-            'route_name': rp['route__name'],
-            'total_trips': total,
-            'on_time_trips': on_time,
-            'on_time_pct': round((on_time * 100 / total), 1) if total else 0,
-        })
 
     return Response({
-        'stats': stats,
+        'stats': overview_data['stats'],
         'recent_issues': IssueSerializer(recent_issues, many=True).data,
-        'route_performance': route_performance,
+        'route_performance': overview_data['route_performance'],
     })
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def route_analytics_api(request):
+    """
+    Route analytics per route: trips, punctuality, passenger totals, and delays.
+    """
     if request.user.role not in ['admin', 'authority']:
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
 
-    start_date, end_date = _parse_date_range(request, int(request.GET.get('days', 30)))
+    days_param = request.GET.get('days')
+    days = int(days_param) if days_param and days_param.isdigit() else 30
+    start_date, end_date, start_dt, end_dt = parse_date_boundaries(
+        request.GET.get('start_date'),
+        request.GET.get('end_date'),
+        default_days=days
+    )
 
-    analytics = RouteAnalytics.objects.filter(
-        date__gte=start_date, date__lte=end_date
-    ).values('route__id', 'route__name').annotate(
-        total_trips=Sum('total_trips'),
-        on_time_trips=Sum('on_time_trips'),
-        delayed_trips=Sum('delayed_trips'),
-        total_passengers=Sum('total_passengers'),
-        avg_delay=Avg('average_delay_mins')
-    ).order_by('-total_passengers')
-
-    return Response({
-        'start_date': start_date.isoformat(),
-        'end_date': end_date.isoformat(),
-        'routes': list(analytics),
-    })
+    data = get_route_analytics_data(start_date, end_date, start_dt, end_dt)
+    return Response(data)
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def performance_summary_api(request):
+    """
+    On-time vs delayed performance summary overall, by route, and daily.
+    """
     if request.user.role not in ['admin', 'authority']:
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
 
-    start_date, end_date = _parse_date_range(request, int(request.GET.get('days', 30)))
-
-    by_route = RouteAnalytics.objects.filter(
-        date__gte=start_date, date__lte=end_date
-    ).values('route__name').annotate(
-        total=Sum('total_trips'),
-        on_time=Sum('on_time_trips'),
-        delayed=Sum('delayed_trips'),
-        avg_delay=Avg('average_delay_mins')
-    ).order_by('route__name')
-
-    overall = RouteAnalytics.objects.filter(
-        date__gte=start_date, date__lte=end_date
-    ).aggregate(
-        total=Sum('total_trips'),
-        on_time=Sum('on_time_trips'),
-        delayed=Sum('delayed_trips')
+    days_param = request.GET.get('days')
+    days = int(days_param) if days_param and days_param.isdigit() else 30
+    start_date, end_date, start_dt, end_dt = parse_date_boundaries(
+        request.GET.get('start_date'),
+        request.GET.get('end_date'),
+        default_days=days
     )
 
-    daily_data = RouteAnalytics.objects.filter(
-        date__gte=start_date, date__lte=end_date
-    ).values('date').annotate(
-        total=Sum('total_trips'),
-        on_time=Sum('on_time_trips'),
-        passengers=Sum('total_passengers')
-    ).order_by('date')
-
-    return Response({
-        'start_date': start_date.isoformat(),
-        'end_date': end_date.isoformat(),
-        'overall': overall,
-        'by_route': list(by_route),
-        'daily': list(daily_data),
-    })
+    data = get_performance_summary_data(start_date, end_date, start_dt, end_dt)
+    return Response(data)
 
 
 @api_view(['GET'])
@@ -148,21 +92,25 @@ def driver_incidents_api(request):
     if request.user.role not in ['admin', 'authority']:
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
 
-    start_date, end_date = _parse_date_range(request, 30)
+    start_date, end_date, start_dt, end_dt = parse_date_boundaries(
+        request.GET.get('start_date'),
+        request.GET.get('end_date'),
+        default_days=30
+    )
 
     incidents = Issue.objects.filter(
-        created_at__date__gte=start_date,
-        created_at__date__lte=end_date
+        created_at__gte=start_dt,
+        created_at__lt=end_dt
     ).select_related('reported_by', 'bus', 'route').order_by('-created_at')
 
     incident_summary = Issue.objects.filter(
-        created_at__date__gte=start_date,
-        created_at__date__lte=end_date
+        created_at__gte=start_dt,
+        created_at__lt=end_dt
     ).values('issue_type').annotate(count=Count('id')).order_by('-count')
 
     driver_summary = Issue.objects.filter(
-        created_at__date__gte=start_date,
-        created_at__date__lte=end_date
+        created_at__gte=start_dt,
+        created_at__lt=end_dt
     ).values('reported_by__username').annotate(count=Count('id')).order_by('-count')[:10]
 
     return Response({
@@ -180,50 +128,14 @@ def driver_logs_api(request):
     if request.user.role not in ['admin', 'authority']:
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
 
-    start_date, end_date = _parse_date_range(request, 30)
+    start_date, end_date, start_dt, end_dt = parse_date_boundaries(
+        request.GET.get('start_date'),
+        request.GET.get('end_date'),
+        default_days=30
+    )
 
-    drivers = User.objects.filter(role='driver').annotate(
-        total_assignments=Count('bus_assignments', filter=Q(
-            bus_assignments__date__gte=start_date,
-            bus_assignments__date__lte=end_date
-        )),
-        total_issues=Count('reported_issues', filter=Q(
-            reported_issues__created_at__date__gte=start_date,
-            reported_issues__created_at__date__lte=end_date
-        ))
-    ).order_by('-total_assignments')
-
-    recent_assignments = BusAssignment.objects.filter(
-        date__gte=start_date,
-        date__lte=end_date
-    ).select_related('driver', 'bus', 'route').order_by('-date', '-shift_start')[:50]
-
-    return Response({
-        'start_date': start_date.isoformat(),
-        'end_date': end_date.isoformat(),
-        'drivers': [
-            {
-                'id': d.id,
-                'username': d.username,
-                'full_name': d.get_full_name() or d.username,
-                'phone': d.phone,
-                'total_assignments': d.total_assignments,
-                'total_issues': d.total_issues,
-            }
-            for d in drivers
-        ],
-        'recent_assignments': [
-            {
-                'id': a.id,
-                'date': a.date.isoformat() if a.date else None,
-                'driver_name': a.driver.get_full_name() or a.driver.username,
-                'bus_number': a.bus.bus_number,
-                'route_name': a.route.name,
-                'is_active': a.is_active,
-            }
-            for a in recent_assignments
-        ],
-    })
+    data = get_driver_logs_data(start_date, end_date, start_dt, end_dt)
+    return Response(data)
 
 
 @api_view(['GET'])
@@ -279,27 +191,29 @@ def export_data_api(request):
         return Response({'error': 'Access denied'}, status=status.HTTP_403_FORBIDDEN)
 
     report_type = request.GET.get('type', 'performance')
-    days = int(request.GET.get('days', 30))
-    end_date = timezone.now().date()
-    start_date = end_date - timedelta(days=days)
+    days_param = request.GET.get('days')
+    days = int(days_param) if days_param and days_param.isdigit() else 30
+    start_date, end_date, start_dt, end_dt = parse_date_boundaries(
+        request.GET.get('start_date'),
+        request.GET.get('end_date'),
+        default_days=days
+    )
 
     if report_type == 'performance':
-        data = RouteAnalytics.objects.filter(
-            date__gte=start_date, date__lte=end_date
-        ).select_related('route')
-        serializer = RouteAnalyticsSerializer(data, many=True)
+        perf_data = get_performance_summary_data(start_date, end_date, start_dt, end_dt)
+        return Response(perf_data['by_route'])
     elif report_type == 'trips':
         data = TripLog.objects.filter(
             date__gte=start_date, date__lte=end_date
-        ).select_related('bus', 'route', 'driver')
+        ).select_related('bus', 'route', 'driver').order_by('-date', '-actual_departure')[:1000]
         serializer = TripLogSerializer(data, many=True)
+        return Response(serializer.data)
     elif report_type == 'feedback':
         data = UserFeedback.objects.filter(
-            created_at__date__gte=start_date,
-            created_at__date__lte=end_date
-        ).select_related('user', 'route', 'bus')
+            created_at__gte=start_dt,
+            created_at__lt=end_dt
+        ).select_related('user', 'route', 'bus')[:1000]
         serializer = UserFeedbackSerializer(data, many=True)
+        return Response(serializer.data)
     else:
         return Response({'error': 'Invalid report type'}, status=status.HTTP_400_BAD_REQUEST)
-
-    return Response(serializer.data)

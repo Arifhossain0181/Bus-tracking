@@ -32,10 +32,84 @@ export function isValidCoordinate(lat: unknown, lng: unknown): boolean {
   if (lat == null || lng == null) return false;
   const numLat = typeof lat === 'number' ? lat : Number(lat);
   const numLng = typeof lng === 'number' ? lng : Number(lng);
-  if (isNaN(numLat) || isNaN(numLng)) return false;
+  if (!Number.isFinite(numLat) || !Number.isFinite(numLng)) return false;
   if (numLat < -90 || numLat > 90 || numLng < -180 || numLng > 180) return false;
   if (numLat === 0 && numLng === 0) return false;
   return true;
+}
+
+/**
+ * Calculates geodesic distance between two points in meters using the Haversine formula.
+ */
+export function calculateDistanceMeters(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  if (!isValidCoordinate(lat1, lon1) || !isValidCoordinate(lat2, lon2)) return 0;
+  const R = 6371000; // Earth radius in meters
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+    Math.cos((lat2 * Math.PI) / 180) *
+    Math.sin(dLon / 2) *
+    Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/**
+ * Checks whether movement between two points is physically plausible within a telemetry interval.
+ * Rejects jumps larger than maxJumpMeters (default 2000m / 2km) to avoid visual teleport artifacts.
+ */
+export function isPlausibleMovement(
+  prevLat: number,
+  prevLng: number,
+  nextLat: number,
+  nextLng: number,
+  maxJumpMeters: number = 2000
+): boolean {
+  if (!isValidCoordinate(prevLat, prevLng) || !isValidCoordinate(nextLat, nextLng)) return false;
+  const dist = calculateDistanceMeters(prevLat, prevLng, nextLat, nextLng);
+  return dist <= maxJumpMeters;
+}
+
+/**
+ * Returns cardinal compass direction (N, NE, E, SE, S, SW, W, NW) for a heading angle.
+ */
+export function getCardinalDirection(headingDeg: number | null | undefined): string {
+  if (headingDeg == null || !Number.isFinite(headingDeg) || headingDeg < 0 || headingDeg > 360) {
+    return '';
+  }
+  const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  const index = Math.round(headingDeg / 45) % 8;
+  return directions[index];
+}
+
+/**
+ * Human-readable estimated arrival string with delay indicators.
+ */
+export function formatEtaDescription(
+  remainingMinutes: number | null | undefined,
+  isDelayed: boolean = false,
+  delayMinutes: number = 0
+): string {
+  if (remainingMinutes == null || !Number.isFinite(remainingMinutes)) {
+    return 'Calculating...';
+  }
+  if (remainingMinutes <= 0) {
+    return 'Arriving now';
+  }
+  const delaySuffix = isDelayed && delayMinutes > 0 ? ` (+${delayMinutes}m delay)` : '';
+  if (remainingMinutes < 60) {
+    return `${remainingMinutes} min${delaySuffix}`;
+  }
+  const hours = Math.floor(remainingMinutes / 60);
+  const mins = remainingMinutes % 60;
+  return mins > 0 ? `${hours}h ${mins}m${delaySuffix}` : `${hours}h${delaySuffix}`;
 }
 
 /**
@@ -117,8 +191,8 @@ export function determineFollowBusStatus(params: {
   // 3. Journey ended (backend explicitly marks journey as completed/aborted)
   const isJourneyEnded = Boolean(
     !bus?.active_journey &&
-      bus?.latest_journey &&
-      (bus.latest_journey.status === 'completed' || bus.latest_journey.status === 'aborted')
+    bus?.latest_journey &&
+    (bus.latest_journey.status === 'completed' || bus.latest_journey.status === 'aborted')
   );
 
   if (isJourneyEnded) {

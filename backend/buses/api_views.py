@@ -8,7 +8,7 @@ from rest_framework.response import Response
 
 from accounts.models import User
 from schedules.models import Route, Stop, Schedule
-from .models import Bus, BusLocation, BusAssignment, ETACalculation
+from .models import Bus, BusLocation, BusAssignment, ETACalculation, Journey
 from .serializers import (
     BusSerializer,
     BusLocationSerializer,
@@ -52,6 +52,23 @@ def bus_detail_api(request, pk):
         recent_assignments = bus.assignments.select_related('driver', 'route').order_by('-created_at')[:5]
         data['recent_locations'] = BusLocationSerializer(recent_locations, many=True).data
         data['recent_assignments'] = BusAssignmentSerializer(recent_assignments, many=True).data
+
+        # Next stop and live ETA information for tracking
+        latest_eta = bus.etas.select_related('stop').order_by('-calculated_at').first()
+        if latest_eta:
+            remaining_mins = max(0, int((latest_eta.calculated_eta - timezone.now()).total_seconds() / 60))
+            data['latest_eta'] = {
+                'stop_id': latest_eta.stop_id,
+                'stop_name': latest_eta.stop.name,
+                'calculated_eta': latest_eta.calculated_eta.strftime('%H:%M'),
+                'remaining_minutes': remaining_mins,
+                'distance_km': float(latest_eta.distance_km),
+                'is_delayed': latest_eta.is_delayed,
+                'delay_minutes': latest_eta.delay_minutes,
+            }
+        else:
+            data['latest_eta'] = None
+
         if bus.current_route:
             data['current_route_trips'] = [
                 {
@@ -136,49 +153,29 @@ def bus_etas_api(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def update_location(request):
-    if request.user.role != 'driver':
-        return Response({'error': 'Only drivers can update location'}, status=status.HTTP_403_FORBIDDEN)
-
-    try:
-        assignment = BusAssignment.objects.get(driver=request.user, is_active=True)
-    except BusAssignment.DoesNotExist:
-        return Response({'error': 'No active assignment'}, status=status.HTTP_404_NOT_FOUND)
-
-    lat = request.data.get('latitude')
-    lng = request.data.get('longitude')
-    spd = request.data.get('speed')
-    heading = request.data.get('heading')
-
-    if lat is None or lng is None:
-        return Response({'error': 'Latitude and longitude required'}, status=status.HTTP_400_BAD_REQUEST)
-
-    location = BusLocation.objects.create(
-        bus=assignment.bus,
-        latitude=lat,
-        longitude=lng,
-        speed=spd,
-        heading=heading
+    """
+    Deprecated legacy endpoint.
+    All driver GPS ingestion must go through the unified pipeline at /api/locations/driver/update/
+    which handles Journey state, jitter filtering, LocationHistory, and ETA synchronization.
+    """
+    return Response(
+        {'error': 'Deprecated endpoint. Use /api/locations/driver/update/ for driver GPS telemetry.'},
+        status=status.HTTP_400_BAD_REQUEST
     )
-
-    update_etas_for_bus(assignment.bus, assignment.route)
-
-    return Response({'status': 'Location updated', 'timestamp': location.timestamp})
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def stop_tracking(request):
-    if request.user.role != 'driver':
-        return Response({'error': 'Only drivers can stop tracking'}, status=status.HTTP_403_FORBIDDEN)
-
-    try:
-        assignment = BusAssignment.objects.get(driver=request.user, is_active=True)
-        assignment.ended_at = timezone.now()
-        assignment.is_active = False
-        assignment.save()
-        return Response({'status': 'Tracking stopped'})
-    except BusAssignment.DoesNotExist:
-        return Response({'error': 'No active assignment'}, status=status.HTTP_404_NOT_FOUND)
+    """
+    Deprecated legacy endpoint.
+    Ending tracking must be performed via /api/locations/journeys/end/ or assignment clearing
+    via /api/buses/<bus_id>/clear-assignment/ to preserve Journey and TripLog lifecycle integrity.
+    """
+    return Response(
+        {'error': 'Deprecated endpoint. End active journey via /api/locations/journeys/end/ or clear assignment via /api/buses/<bus_id>/clear-assignment/.'},
+        status=status.HTTP_400_BAD_REQUEST
+    )
 
 
 @api_view(['GET'])
@@ -319,19 +316,39 @@ def assignment_clear_api(request, bus_id):
     if not request.user.is_admin_user:
         return Response({'error': 'Access denied.'}, status=status.HTTP_403_FORBIDDEN)
 
-    bus = get_object_or_404(Bus, pk=bus_id)
-    assignment = BusAssignment.objects.filter(bus=bus, is_active=True).first()
-    if not assignment:
-        return Response({'error': f'Bus {bus.bus_number} has no active assignment.'}, status=status.HTTP_400_BAD_REQUEST)
+    from django.db import transaction
+    from locations.models import DriverLocation
+    from reports.services import sync_journey_to_trip_log
+    from notifications.models import Notification
 
-    assignment.is_active = False
-    assignment.ended_at = timezone.now()
-    assignment.save()
+    with transaction.atomic():
+        bus = get_object_or_404(Bus, pk=bus_id)
+        assignment = BusAssignment.objects.select_for_update().filter(bus=bus, is_active=True).first()
+        if not assignment:
+            return Response({'error': f'Bus {bus.bus_number} has no active assignment.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    bus.current_route = None
-    bus.save()
+        assignment.is_active = False
+        assignment.ended_at = timezone.now()
+        assignment.save()
 
-    Schedule.objects.filter(bus=bus, driver=assignment.driver, is_active=True).update(is_active=False)
+        bus.current_route = None
+        bus.save()
+
+        Schedule.objects.filter(bus=bus, driver=assignment.driver, is_active=True).update(is_active=False)
+
+        # Gracefully abort any active journeys associated with this bus so none remain orphaned
+        active_journeys = Journey.objects.select_for_update().filter(bus=bus, status='active')
+        for aj in active_journeys:
+            aj.status = 'aborted'
+            aj.end_time = timezone.now()
+            abort_note = f"[Auto-aborted: Bus assignment cleared by {request.user.role}:{request.user.username}]"
+            aj.notes = f"{aj.notes}\n{abort_note}".strip() if aj.notes else abort_note
+            aj.save()
+            DriverLocation.objects.filter(driver=aj.driver).update(is_sharing=False, journey=None)
+            sync_journey_to_trip_log(aj)
+            Notification.create_journey_notification(
+                aj, 'journey_end', request.user, reason="Bus assignment cleared by administrator"
+            )
 
     return Response({'status': 'cleared', 'message': f'Assignment cleared for Bus {bus.bus_number}.'})
 

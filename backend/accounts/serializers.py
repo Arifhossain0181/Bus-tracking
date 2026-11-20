@@ -52,6 +52,9 @@ class UserSerializer(serializers.ModelSerializer):
         if not (is_owner or is_admin):
             data.pop('nid_number', None)
             data.pop('address', None)
+            if 'driver_profile' in data and data['driver_profile']:
+                data['driver_profile'].pop('emergency_contact', None)
+                data['driver_profile'].pop('license_number', None)
         return data
 
 

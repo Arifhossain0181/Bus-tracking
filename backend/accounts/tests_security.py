@@ -368,6 +368,25 @@ class SecurityHardeningTests(TestCase):
         self.assertNotIn('password', student_data)
         self.assertNotIn('password', admin_data)
 
+        # 5. DriverProfile sensitive fields (license_number, emergency_contact) redacted for third parties
+        from accounts.models import DriverProfile
+        DriverProfile.objects.create(
+            user=self.driver1,
+            license_number='DL-998877',
+            license_expiry=datetime.date(2028, 12, 31),
+            emergency_contact='01799999999',
+            years_experience=5,
+        )
+        admin_data2 = UserSerializer(self.driver1, context={'request': type('Req', (), {'user': self.admin})()}).data
+        owner_data2 = UserSerializer(self.driver1, context={'request': type('Req', (), {'user': self.driver1})()}).data
+        student_data2 = UserSerializer(self.driver1, context={'request': type('Req', (), {'user': self.student})()}).data
+
+        self.assertEqual(admin_data2['driver_profile']['license_number'], 'DL-998877')
+        self.assertEqual(owner_data2['driver_profile']['license_number'], 'DL-998877')
+        self.assertNotIn('license_number', student_data2['driver_profile'])
+        self.assertNotIn('emergency_contact', student_data2['driver_profile'])
+        self.assertIn('years_experience', student_data2['driver_profile'])
+
     # 11. Throttling blocks auth brute-force attacks (HTTP 429)
     def test_auth_rate_limiting_throttles_excessive_attempts(self):
         from core.throttling import AuthRateThrottle

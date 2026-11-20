@@ -64,12 +64,17 @@ class Notification(models.Model):
         return self.title
     
     @classmethod
-    def create_journey_notification(cls, journey, notification_type, created_by):
+    def create_journey_notification(cls, journey, notification_type, created_by, reason=''):
         """Create a notification for journey events."""
         if notification_type == 'journey_start':
             title = f"Journey Started: {journey.route.name}"
             message = f"Driver {journey.driver.get_full_name()} has started journey on {journey.route.name} with bus {journey.bus.bus_number}."
             priority = 'info'
+        elif journey.status == 'aborted':
+            title = f"Journey Aborted: {journey.route.name}"
+            msg_reason = f" Reason: {reason}" if reason else ""
+            message = f"Journey on {journey.route.name} (Bus {journey.bus.bus_number}) was aborted.{msg_reason}"
+            priority = 'warning'
         else:
             title = f"Journey Ended: {journey.route.name}"
             message = f"Driver {journey.driver.get_full_name()} has ended journey on {journey.route.name}."

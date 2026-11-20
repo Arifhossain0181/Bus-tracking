@@ -77,6 +77,16 @@ export interface BusTripSummary {
   is_active: boolean;
 }
 
+export interface BusLatestEta {
+  stop_id: number;
+  stop_name: string;
+  calculated_eta: string;
+  remaining_minutes: number;
+  distance_km: number;
+  is_delayed: boolean;
+  delay_minutes: number;
+}
+
 export interface Bus {
   id: number;
   bus_number: string;
@@ -91,6 +101,7 @@ export interface Bus {
   route_name?: string | null;
   current_trip?: number | null;
   latest_location?: BusLocation | null;
+  latest_eta?: BusLatestEta | null;
   active_assignment?: BusAssignment | null;
   active_journey?: {
     id: number;

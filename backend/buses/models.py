@@ -213,16 +213,39 @@ class Journey(models.Model):
     class Meta:
         db_table = 'journeys'
         ordering = ['-start_time']
+        indexes = [
+            models.Index(fields=['status', '-start_time']),
+            models.Index(fields=['driver', 'status']),
+            models.Index(fields=['bus', 'status']),
+            models.Index(fields=['route', 'status']),
+            models.Index(fields=['start_time']),
+        ]
 
     def __str__(self):
-        return f"{self.driver.get_full_name()} - {self.bus.bus_number} - {self.status}"
+        driver_name = (self.driver.get_full_name() or self.driver.username) if self.driver else "Unknown Driver"
+        bus_number = self.bus.bus_number if self.bus else "Unknown Bus"
+        return f"{driver_name} - {bus_number} - {self.status}"
 
     @property
     def duration_minutes(self):
-        if self.end_time:
-            delta = self.end_time - self.start_time
-            return int(delta.total_seconds() / 60)
-        return None
+        if not self.start_time or not self.end_time:
+            return None
+        delta = self.end_time - self.start_time
+        total_secs = delta.total_seconds()
+        if total_secs < 0:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Journey #%s has invalid negative duration (start=%s, end=%s)",
+                self.id, self.start_time, self.end_time
+            )
+            return None
+        return int(total_secs / 60)
+
+    def clean(self):
+        super().clean()
+        if self.start_time and self.end_time and self.end_time < self.start_time:
+            from django.core.exceptions import ValidationError
+            raise ValidationError({'end_time': 'End time cannot be earlier than start time.'})
 
     @classmethod
     def get_active_journey(cls, driver):

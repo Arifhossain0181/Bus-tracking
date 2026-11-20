@@ -7,6 +7,7 @@ import {
   AlertCircle,
   BarChart3,
   Bell,
+  Box,
   Bus,
   CalendarDays,
   ClipboardList,
@@ -136,6 +137,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           { href: '/notifications', label: 'Notifications', icon: <Bell className="w-4 h-4" /> },
         ]
       : [];
+
+  const experimentalLinks: NavItem[] = [
+    { href: '/experimental/maplibre', label: 'MapLibre 3D (Experimental)', icon: <Box className="w-4 h-4 text-indigo-600" /> },
+  ];
 
   const isActive = (href: string) => {
     if (href === '/dashboard') return pathname === '/dashboard';
@@ -350,6 +355,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {renderSection('Management', adminLinks)}
           {renderSection('Authority Oversight', authorityLinks)}
           {renderSection('Feedback & Alerts', feedbackLinks)}
+          {renderSection('Experimental R&D', experimentalLinks)}
         </aside>
 
         {/* Main Content */}
