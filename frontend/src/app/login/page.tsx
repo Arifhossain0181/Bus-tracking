@@ -248,11 +248,11 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950">
+    <div className="min-h-screen flex flex-col bg-[#f4f6f9] bg-gradient-to-br from-slate-100 via-blue-50/50 to-indigo-100/30">
       <div className="flex-1 flex items-center justify-center p-4">
         <Suspense
           fallback={
-            <div className="w-full max-w-md h-96 bg-slate-900/50 rounded-3xl animate-pulse flex items-center justify-center text-slate-400 text-sm">
+            <div className="w-full max-w-md h-96 bg-white rounded-3xl animate-pulse flex items-center justify-center text-slate-400 text-sm shadow-md">
               Loading Portal...
             </div>
           }
@@ -263,11 +263,11 @@ export default function LoginPage() {
 
       <footer className="py-4 text-center text-xs text-slate-500">
         &copy; 2026 Md. Taher Bin Omar Hijbullah and his{' '}
-        <Link href="/contributors" className="underline font-semibold text-slate-300 hover:text-white">
+        <Link href="/contributors" className="underline font-semibold text-slate-700 hover:text-blue-600">
           Team
         </Link>{' '}
         &middot;{' '}
-        <Link href="/" className="hover:text-slate-300">
+        <Link href="/" className="hover:text-blue-600 text-slate-600">
           Back to Role Selection
         </Link>
       </footer>
