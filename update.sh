@@ -29,18 +29,9 @@ npm install --silent
 npm run build
 
 # 4. Restart services
-echo "[4/4] Restarting PM2 Services..."
-if ! pm2 restart all 2>/dev/null; then
-    echo "Processes not running in memory. Resurrecting or starting fresh..."
-    pm2 resurrect 2>/dev/null || true
-    if ! pm2 describe ubus-backend >/dev/null 2>&1; then
-        pm2 start /home/dsriubatac/Bus-tracking/backend/run_backend.sh --name ubus-backend --interpreter bash
-    fi
-    if ! pm2 describe ubus-frontend >/dev/null 2>&1; then
-        pm2 start npm --name ubus-frontend --cwd /home/dsriubatac/Bus-tracking/frontend -- start -- -p 3000
-    fi
-    pm2 save
-fi
+echo "[4/4] Starting Services in persistent background mode..."
+chmod +x /home/dsriubatac/Bus-tracking/start_services.sh
+/home/dsriubatac/Bus-tracking/start_services.sh
 
 echo "==========================================="
 echo "   Update Completed Successfully!          "
