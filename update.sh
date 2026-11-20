@@ -8,7 +8,8 @@ echo "==========================================="
 # 1. Pull latest code from GitHub
 cd /home/dsriubatac/Bus-tracking
 echo "[1/4] Pulling latest code from GitHub..."
-git pull origin hij_dev
+git fetch origin hij_dev
+git reset --hard origin/hij_dev
 
 # 2. Backend updates
 echo "[2/4] Updating Backend (Dependencies, Migrations, Static)..."
