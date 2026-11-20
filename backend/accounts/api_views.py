@@ -36,7 +36,7 @@ def login_api(request):
 
     # Check pending/rejected status first for clear UX feedback
     existing_user = User.objects.filter(username=username).first()
-    if existing_user and not existing_user.is_active:
+    if existing_user and not existing_user.is_active and not existing_user.is_superuser:
         if existing_user.approval_status == 'pending':
             return Response(
                 {'error': 'Your registration is pending admin approval.'},

@@ -30,8 +30,18 @@ def create_default_users(sender, **kwargs):
             is_active=True,
             approval_status='approved'
         )
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import AbstractUser, UserManager
 from django.db import models
+
+
+class CustomUserManager(UserManager):
+    def create_superuser(self, username, email=None, password=None, **extra_fields):
+        extra_fields.setdefault('role', 'admin')
+        extra_fields.setdefault('approval_status', 'approved')
+        extra_fields.setdefault('is_staff', True)
+        extra_fields.setdefault('is_superuser', True)
+        return super().create_superuser(username, email, password, **extra_fields)
+
 
 class User(AbstractUser):
     ROLE_CHOICES = [
@@ -64,12 +74,22 @@ class User(AbstractUser):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = CustomUserManager()
+
     class Meta:
         db_table = 'users'
         ordering = ['-created_at']
 
     def __str__(self):
         return f"{self.username} ({self.get_role_display()})"
+
+    def save(self, *args, **kwargs):
+        if self.is_superuser:
+            if self.role != 'admin':
+                self.role = 'admin'
+            if self.approval_status != 'approved':
+                self.approval_status = 'approved'
+        super().save(*args, **kwargs)
 
     @property
     def is_student(self):
@@ -89,7 +109,7 @@ class User(AbstractUser):
 
     @property
     def is_admin_user(self):
-        return self.role == 'admin'
+        return self.role == 'admin' or self.is_superuser
 
     @property
     def is_authority(self):
@@ -101,11 +121,12 @@ class User(AbstractUser):
 
     @property
     def is_approved(self):
-        return self.approval_status == 'approved'
+        return self.approval_status == 'approved' or self.is_superuser
 
     @property
     def is_pending(self):
-        return self.approval_status == 'pending'
+        return self.approval_status == 'pending' and not self.is_superuser
+
 
 
 class DriverProfile(models.Model):

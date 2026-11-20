@@ -33,8 +33,6 @@ interface RoleCard {
   buttonClass: string;
   description: string;
   highlights: string[];
-  demoUser: string;
-  demoPass: string;
 }
 
 const ROLES: RoleCard[] = [
@@ -51,8 +49,6 @@ const ROLES: RoleCard[] = [
     description:
       'Manage buses, build and edit routes, assign drivers to shifts, approve new student/faculty accounts, and oversee system reports.',
     highlights: ['Add & configure buses', 'Route builder & stops', 'Driver shift assignments', 'Approve registrations'],
-    demoUser: 'admin',
-    demoPass: 'admin123',
   },
   {
     id: 'authority',
@@ -67,8 +63,6 @@ const ROLES: RoleCard[] = [
     description:
       'Monitor live transit operations, evaluate driver performance logs, review journey paths, and inspect incident reports.',
     highlights: ['Operational overview', 'Punctuality analytics', 'Historical GPS replay', 'Incident management'],
-    demoUser: 'authority',
-    demoPass: 'authority123',
   },
   {
     id: 'driver',
@@ -83,8 +77,6 @@ const ROLES: RoleCard[] = [
     description:
       'Start scheduled trips, broadcast real-time GPS location from your mobile device, flag traffic delays, and report breakdowns.',
     highlights: ['One-tap live GPS sharing', 'Start / End assigned trip', 'Report breakdown or delay', 'View active route'],
-    demoUser: 'driver1',
-    demoPass: 'driver123',
   },
   {
     id: 'student',
@@ -99,8 +91,6 @@ const ROLES: RoleCard[] = [
     description:
       'Explore live interactive bus map, check upcoming shuttle and metro schedules, calculate stop ETAs, and submit service feedback.',
     highlights: ['Interactive live bus map', 'Shuttle & express schedules', 'Estimated arrival times', 'Submit trip feedback'],
-    demoUser: 'student1',
-    demoPass: 'student123',
   },
 ];
 
@@ -261,22 +251,15 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* Action Button & Demo Info */}
-              <div className="space-y-2 pt-2">
+              {/* Action Button */}
+              <div className="pt-2">
                 <Link
-                  href={`/login?role=${role.roleKey}&username=${role.demoUser}`}
+                  href={`/login?role=${role.roleKey}`}
                   className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition ${role.buttonClass}`}
                 >
                   <span>Enter as {role.title.split(' ')[0]}</span>
                   <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
                 </Link>
-
-                <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800/70 text-[11px] flex items-center justify-between text-slate-400">
-                  <span>Demo Login:</span>
-                  <span className="font-mono text-slate-200">
-                    <strong className="text-white">{role.demoUser}</strong> / {role.demoPass}
-                  </span>
-                </div>
               </div>
             </div>
           ))}
