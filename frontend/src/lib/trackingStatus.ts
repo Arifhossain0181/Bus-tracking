@@ -24,6 +24,61 @@ export const GPS_FRESHNESS_THRESHOLDS = {
   STALE_MAX_SECONDS: 120,
 } as const;
 
+export const GPS_QUALITY_THRESHOLDS = {
+  MAX_ACCEPTABLE_ACCURACY_METERS: 100,
+  HIGH_PRECISION_ACCURACY_METERS: 30,
+  INITIAL_GPS_TIMEOUT_MS: 12000,
+  MIN_DISPLACEMENT_METERS: 3.0,
+  MAX_PLAUSIBLE_JUMP_METERS: 1500,
+  STATIONARY_SPEED_CUTOFF_MPS: 0.5,
+  KEEPALIVE_INTERVAL_MS: 15000,
+} as const;
+
+export type GpsAcquisitionStatus =
+  | 'idle'
+  | 'acquiring'
+  | 'acquired'
+  | 'timeout'
+  | 'permission_denied'
+  | 'position_unavailable'
+  | 'poor_accuracy'
+  | 'error';
+
+export interface GpsCoordinates {
+  lat: number;
+  lng: number;
+  accuracy: number | null;
+  speed: number | null;
+  heading: number | null;
+}
+
+export interface GpsFixResult {
+  success: boolean;
+  status: GpsAcquisitionStatus;
+  coords?: GpsCoordinates;
+  errorMessage?: string;
+}
+
+export interface EvaluateGpsFixResult {
+  isValid: boolean;
+  isAccurate: boolean;
+  status: GpsAcquisitionStatus;
+  accuracy: number | null;
+  errorReason?: string;
+}
+
+export interface TransmitDecision {
+  shouldSend: boolean;
+  reason:
+    | 'initial'
+    | 'invalid_coordinates'
+    | 'implausible_jump'
+    | 'keepalive'
+    | 'movement'
+    | 'stationary_throttled';
+  displacementMeters: number;
+}
+
 /**
  * Validates latitude and longitude values.
  * Returns true if valid finite numbers in realistic ranges and not (0, 0).
@@ -278,4 +333,283 @@ export function determineFollowBusStatus(params: {
     isAccurate,
     hasUsableCoordinates: true,
   };
+}
+
+/**
+ * Evaluates raw GPS coordinates and accuracy against strict integrity thresholds.
+ * Rejects NaN, non-finite values, out-of-range degrees, Null Island (0, 0),
+ * and accuracy exceeding maxAcceptableMeters.
+ */
+export function evaluateGpsFix(
+  coords: {
+    latitude?: unknown;
+    longitude?: unknown;
+    accuracy?: unknown;
+  } | null | undefined,
+  maxAccuracyMeters: number = GPS_QUALITY_THRESHOLDS.MAX_ACCEPTABLE_ACCURACY_METERS
+): EvaluateGpsFixResult {
+  if (!coords) {
+    return {
+      isValid: false,
+      isAccurate: false,
+      status: 'error',
+      accuracy: null,
+      errorReason: 'No GPS coordinates provided.',
+    };
+  }
+
+  const { latitude, longitude, accuracy } = coords;
+
+  if (!isValidCoordinate(latitude, longitude)) {
+    const latNum = Number(latitude);
+    const lngNum = Number(longitude);
+    if (latNum === 0 && lngNum === 0) {
+      return {
+        isValid: false,
+        isAccurate: false,
+        status: 'error',
+        accuracy: null,
+        errorReason: 'Invalid coordinates: Null Island (0, 0) is rejected.',
+      };
+    }
+    return {
+      isValid: false,
+      isAccurate: false,
+      status: 'error',
+      accuracy: null,
+      errorReason: 'Invalid or out-of-range GPS coordinates.',
+    };
+  }
+
+  let accNum: number | null = null;
+  if (accuracy != null) {
+    const parsed = typeof accuracy === 'number' ? accuracy : Number(accuracy);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      accNum = Math.round(parsed);
+    }
+  }
+
+  if (accNum !== null && accNum > maxAccuracyMeters) {
+    return {
+      isValid: true,
+      isAccurate: false,
+      status: 'poor_accuracy',
+      accuracy: accNum,
+      errorReason: `GPS accuracy too low (±${accNum}m). Must be within ±${maxAccuracyMeters}m.`,
+    };
+  }
+
+  return {
+    isValid: true,
+    isAccurate: true,
+    status: 'acquired',
+    accuracy: accNum,
+  };
+}
+
+/**
+ * Determines whether a new GPS fix should be transmitted to the backend.
+ * Enforces:
+ * 1. Physical plausibility: rejects teleportation jumps > maxJumpMeters (1500m).
+ * 2. Stationary throttling: skips redundant updates if displacement < minDisplacementMeters and vehicle is stationary.
+ * 3. Keepalive heartbeat: forces transmission if keepaliveIntervalMs (15s) has elapsed.
+ */
+export function shouldTransmitLocationUpdate(params: {
+  lastSentCoords: { lat: number; lng: number } | null;
+  lastSentTimeMs: number;
+  newCoords: { lat: number; lng: number; speed?: number | null } | null;
+  nowMs?: number;
+  minDisplacementMeters?: number;
+  keepaliveIntervalMs?: number;
+  maxJumpMeters?: number;
+}): TransmitDecision {
+  const {
+    lastSentCoords,
+    lastSentTimeMs,
+    newCoords,
+    nowMs = Date.now(),
+    minDisplacementMeters = GPS_QUALITY_THRESHOLDS.MIN_DISPLACEMENT_METERS,
+    keepaliveIntervalMs = GPS_QUALITY_THRESHOLDS.KEEPALIVE_INTERVAL_MS,
+    maxJumpMeters = GPS_QUALITY_THRESHOLDS.MAX_PLAUSIBLE_JUMP_METERS,
+  } = params;
+
+  if (!newCoords || !isValidCoordinate(newCoords.lat, newCoords.lng)) {
+    return {
+      shouldSend: false,
+      reason: 'invalid_coordinates',
+      displacementMeters: 0,
+    };
+  }
+
+  if (!lastSentCoords || !isValidCoordinate(lastSentCoords.lat, lastSentCoords.lng)) {
+    return {
+      shouldSend: true,
+      reason: 'initial',
+      displacementMeters: 0,
+    };
+  }
+
+  const dist = calculateDistanceMeters(
+    lastSentCoords.lat,
+    lastSentCoords.lng,
+    newCoords.lat,
+    newCoords.lng
+  );
+
+  const elapsedMs = Math.max(0, nowMs - lastSentTimeMs);
+  const elapsedSeconds = elapsedMs / 1000;
+
+  // Maximum plausible jump distance scales with elapsed time (allows up to 42 m/s ~ 151 km/h for transit gaps)
+  // while retaining the baseline 1500m cutoff for normal 5s telemetry intervals
+  const dynamicAllowedJump = Math.max(maxJumpMeters, elapsedSeconds * 42.0);
+
+  // Reject physically implausible jumps (teleportation artifacts)
+  if (dist > dynamicAllowedJump) {
+    return {
+      shouldSend: false,
+      reason: 'implausible_jump',
+      displacementMeters: dist,
+    };
+  }
+
+  // Movement check: displacement >= 3m OR speed > 0.5 m/s (~1.8 km/h)
+  const isMovingBySpeed =
+    newCoords.speed != null &&
+    Number.isFinite(newCoords.speed) &&
+    newCoords.speed > GPS_QUALITY_THRESHOLDS.STATIONARY_SPEED_CUTOFF_MPS;
+
+  if (dist >= minDisplacementMeters || isMovingBySpeed) {
+    return {
+      shouldSend: true,
+      reason: 'movement',
+      displacementMeters: dist,
+    };
+  }
+
+  // Heartbeat / keepalive: transmit at least once every 15 seconds even when stationary
+  if (elapsedMs >= keepaliveIntervalMs) {
+    return {
+      shouldSend: true,
+      reason: 'keepalive',
+      displacementMeters: dist,
+    };
+  }
+
+  return {
+    shouldSend: false,
+    reason: 'stationary_throttled',
+    displacementMeters: dist,
+  };
+}
+
+/**
+ * Promisified browser Geolocation acquisition with timeout, accuracy validation,
+ * and structured error codes. Eliminates hardcoded coordinate fallbacks.
+ */
+export async function acquireGpsFix(options?: {
+  timeoutMs?: number;
+  maxAccuracyMeters?: number;
+  geolocationProvider?: Geolocation;
+}): Promise<GpsFixResult> {
+  const timeoutMs = options?.timeoutMs ?? GPS_QUALITY_THRESHOLDS.INITIAL_GPS_TIMEOUT_MS;
+  const maxAccuracyMeters =
+    options?.maxAccuracyMeters ?? GPS_QUALITY_THRESHOLDS.MAX_ACCEPTABLE_ACCURACY_METERS;
+  const geo =
+    options?.geolocationProvider ??
+    (typeof navigator !== 'undefined' ? navigator.geolocation : undefined);
+
+  if (!geo) {
+    return {
+      success: false,
+      status: 'position_unavailable',
+      errorMessage: 'Geolocation is not supported by your browser or device.',
+    };
+  }
+
+  return new Promise<GpsFixResult>((resolve) => {
+    geo.getCurrentPosition(
+      (pos) => {
+        const rawCoords = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+        };
+        const evaluation = evaluateGpsFix(rawCoords, maxAccuracyMeters);
+
+        const lat = Number(pos.coords.latitude.toFixed(7));
+        const lng = Number(pos.coords.longitude.toFixed(7));
+        const accuracy = pos.coords.accuracy != null ? Math.round(pos.coords.accuracy) : null;
+        const speed = pos.coords.speed != null ? pos.coords.speed : null;
+        const heading = pos.coords.heading != null ? pos.coords.heading : null;
+
+        const coords: GpsCoordinates = { lat, lng, accuracy, speed, heading };
+
+        if (!evaluation.isValid) {
+          resolve({
+            success: false,
+            status: evaluation.status,
+            coords,
+            errorMessage: evaluation.errorReason || 'Invalid coordinates received.',
+          });
+          return;
+        }
+
+        if (!evaluation.isAccurate) {
+          resolve({
+            success: false,
+            status: 'poor_accuracy',
+            coords,
+            errorMessage:
+              evaluation.errorReason ||
+              `GPS accuracy too low (±${accuracy}m). Please move under clear sky and retry.`,
+          });
+          return;
+        }
+
+        resolve({
+          success: true,
+          status: 'acquired',
+          coords,
+        });
+      },
+      (err: GeolocationPositionError) => {
+        // GeolocationPositionError constants:
+        // 1: PERMISSION_DENIED
+        // 2: POSITION_UNAVAILABLE
+        // 3: TIMEOUT
+        if (err.code === 1) {
+          resolve({
+            success: false,
+            status: 'permission_denied',
+            errorMessage:
+              'Location permission was denied. Please allow location access in your browser settings.',
+          });
+        } else if (err.code === 2) {
+          resolve({
+            success: false,
+            status: 'position_unavailable',
+            errorMessage:
+              'GPS position unavailable. Ensure device location / GPS is turned on.',
+          });
+        } else if (err.code === 3) {
+          resolve({
+            success: false,
+            status: 'timeout',
+            errorMessage: `GPS acquisition timed out after ${Math.round(timeoutMs / 1000)}s. Please retry with a clear sky view.`,
+          });
+        } else {
+          resolve({
+            success: false,
+            status: 'error',
+            errorMessage: err.message || 'Unknown GPS acquisition error.',
+          });
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: timeoutMs,
+        maximumAge: 0,
+      }
+    );
+  });
 }

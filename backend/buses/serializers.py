@@ -3,10 +3,22 @@ from .models import Bus, BusLocation, BusAssignment, ETACalculation
 
 
 class BusLocationSerializer(serializers.ModelSerializer):
+    accuracy = serializers.SerializerMethodField()
+
     class Meta:
         model = BusLocation
-        fields = ['id', 'bus', 'latitude', 'longitude', 'speed', 'heading', 'is_accurate', 'timestamp']
+        fields = ['id', 'bus', 'latitude', 'longitude', 'speed', 'heading', 'accuracy', 'is_accurate', 'timestamp']
         read_only_fields = ['id', 'timestamp']
+
+    def get_accuracy(self, obj):
+        try:
+            from locations.models import DriverLocation
+            driver_loc = DriverLocation.objects.filter(journey__bus=obj.bus).first()
+            if driver_loc and driver_loc.accuracy is not None:
+                return round(driver_loc.accuracy, 1)
+        except Exception:
+            pass
+        return None
 
 
 class BusAssignmentSerializer(serializers.ModelSerializer):
@@ -105,3 +117,7 @@ class BusMapDataSerializer(serializers.Serializer):
     next_stop = serializers.CharField(allow_null=True)
     eta = serializers.CharField()
     speed = serializers.DecimalField(max_digits=5, decimal_places=2, allow_null=True)
+    heading = serializers.DecimalField(max_digits=5, decimal_places=2, allow_null=True, required=False)
+    accuracy = serializers.FloatField(allow_null=True, required=False)
+    is_accurate = serializers.BooleanField(required=False)
+    timestamp = serializers.DateTimeField(required=False)

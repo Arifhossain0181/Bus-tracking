@@ -38,6 +38,7 @@ class LocationUpdateSerializer(serializers.Serializer):
     accuracy = serializers.FloatField(required=False, allow_null=True)
     heading = serializers.FloatField(required=False, allow_null=True)
     speed = serializers.FloatField(required=False, allow_null=True)
+    timestamp = serializers.DateTimeField(required=False, allow_null=True)
 
     def validate_latitude(self, value):
         if value < Decimal('-90.0') or value > Decimal('90.0'):

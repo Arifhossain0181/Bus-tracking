@@ -410,3 +410,138 @@ class UnifiedTrackingPipelineTests(TestCase):
         self.assertEqual(LocationHistory.objects.filter(driver=self.driver1).count(), 5)
         # BusLocations should have 5 records
         self.assertEqual(BusLocation.objects.filter(bus=self.bus1).count(), 5)
+
+    # 13. start_journey rejects Null Island (0, 0)
+    def test_start_journey_rejects_null_island(self):
+        self.client.force_authenticate(user=self.driver2)
+        res = self.client.post('/api/locations/journey/start/', {
+            'latitude': 0,
+            'longitude': 0,
+        }, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Null Island', res.data.get('error', ''))
+
+    # 14. start_journey rejects out-of-range coordinates
+    def test_start_journey_rejects_out_of_range_coordinates(self):
+        self.client.force_authenticate(user=self.driver2)
+        res = self.client.post('/api/locations/journey/start/', {
+            'latitude': 95.0,
+            'longitude': 90.0,
+        }, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Latitude must be between -90 and 90', res.data.get('error', ''))
+
+    # 15. start_journey stores accuracy, speed, heading and creates initial BusLocation
+    def test_start_journey_stores_telemetry_and_creates_bus_location(self):
+        self.client.force_authenticate(user=self.driver2)
+        res = self.client.post('/api/locations/journey/start/', {
+            'latitude': 23.8550000,
+            'longitude': 90.4550000,
+            'accuracy': 12.0,
+            'speed': 8.5,
+            'heading': 180.0,
+        }, format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data['status'], 'success')
+
+        journey = Journey.objects.get(id=res.data['journey_id'])
+        self.assertEqual(round(float(journey.start_latitude), 6), round(23.8550000, 6))
+        self.assertEqual(round(float(journey.start_longitude), 6), round(90.4550000, 6))
+
+        driver_loc = DriverLocation.objects.get(driver=self.driver2)
+        self.assertTrue(driver_loc.is_sharing)
+        self.assertEqual(driver_loc.accuracy, 12.0)
+        self.assertEqual(driver_loc.speed, 8.5)
+        self.assertEqual(driver_loc.heading, 180.0)
+
+        # Initial BusLocation created
+        bus_loc = BusLocation.objects.filter(bus=self.bus2).latest('timestamp')
+        self.assertIsNotNone(bus_loc)
+        self.assertEqual(round(float(bus_loc.latitude), 6), round(23.8550000, 6))
+        self.assertEqual(round(float(bus_loc.longitude), 6), round(90.4550000, 6))
+        self.assertEqual(float(bus_loc.speed), 8.5)
+        self.assertTrue(bus_loc.is_accurate)
+
+    # 16. LocationUpdateSerializer and update_location reject Null Island (0, 0)
+    def test_location_update_rejects_null_island(self):
+        self.client.force_authenticate(user=self.driver1)
+        res = self.client.post('/api/locations/location/update/', {
+            'latitude': 0,
+            'longitude': 0,
+        }, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # 17. Active locations endpoint exposes numeric accuracy
+    def test_active_locations_endpoint_exposes_numeric_accuracy(self):
+        self.client.force_authenticate(user=self.driver1)
+        self.client.post('/api/locations/location/update/', {
+            'latitude': 23.8155000,
+            'longitude': 90.4155000,
+            'accuracy': 18.5,
+        }, format='json')
+
+        self.client.force_authenticate(user=self.student)
+        res = self.client.get('/api/locations/location/active/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        driver_entry = next((i for i in res.data if i['driver_id'] == self.driver1.id), None)
+        self.assertIsNotNone(driver_entry)
+        self.assertEqual(driver_entry['accuracy'], 18.5)
+
+    # 18. Out-of-order GPS update with older timestamp does not overwrite newer live location
+    def test_out_of_order_gps_update_ignored_for_live_state(self):
+        self.client.force_authenticate(user=self.driver1)
+        t_newer = timezone.now()
+
+        # Newer update first
+        res_newer = self.client.post('/api/locations/location/update/', {
+            'latitude': 23.8200000,
+            'longitude': 90.4200000,
+            'timestamp': t_newer.isoformat(),
+        }, format='json')
+        self.assertEqual(res_newer.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_newer.data['status'], 'success')
+
+        # Delayed older update arrives later with timestamp 30 seconds in the past
+        t_older = t_newer - timezone.timedelta(seconds=30)
+        res_older = self.client.post('/api/locations/location/update/', {
+            'latitude': 23.8000000,
+            'longitude': 90.4000000,
+            'timestamp': t_older.isoformat(),
+        }, format='json')
+        self.assertEqual(res_older.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_older.data['status'], 'ignored')
+
+        # Verify DriverLocation still holds the newer coordinates (23.82, 90.42)
+        driver_loc = DriverLocation.objects.get(driver=self.driver1)
+        self.assertEqual(round(float(driver_loc.latitude), 6), round(23.8200000, 6))
+        self.assertEqual(round(float(driver_loc.longitude), 6), round(90.4200000, 6))
+
+    # 19. Bus detail and bus locations endpoints expose numeric accuracy and heading
+    def test_bus_detail_and_locations_expose_numeric_accuracy(self):
+        self.client.force_authenticate(user=self.driver1)
+        self.client.post('/api/locations/location/update/', {
+            'latitude': 23.8177000,
+            'longitude': 90.4177000,
+            'accuracy': 14.2,
+            'heading': 225.0,
+            'speed': 30.0,
+        }, format='json')
+
+        self.client.force_authenticate(user=self.student)
+        # Check /api/buses/<id>/
+        detail_res = self.client.get(f'/api/buses/{self.bus1.id}/')
+        self.assertEqual(detail_res.status_code, status.HTTP_200_OK)
+        latest_loc = detail_res.data.get('latest_location')
+        self.assertIsNotNone(latest_loc)
+        self.assertEqual(latest_loc.get('accuracy'), 14.2)
+        self.assertEqual(float(latest_loc.get('heading')), 225.0)
+
+        # Check /api/buses/locations/
+        locations_res = self.client.get('/api/buses/locations/')
+        self.assertEqual(locations_res.status_code, status.HTTP_200_OK)
+        bus_entry = next((b for b in locations_res.data if b['id'] == self.bus1.id), None)
+        self.assertIsNotNone(bus_entry)
+        self.assertEqual(bus_entry.get('accuracy'), 14.2)
+        self.assertEqual(float(bus_entry.get('heading')), 225.0)
+        self.assertTrue(bus_entry.get('is_accurate'))
+        self.assertIsNotNone(bus_entry.get('timestamp'))

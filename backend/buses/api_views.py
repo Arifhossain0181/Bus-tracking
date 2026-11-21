@@ -110,6 +110,15 @@ def bus_locations(request):
         location = bus.latest_location
         if location:
             latest_eta = bus.etas.select_related('stop').order_by('-calculated_at').first()
+            driver_acc = None
+            try:
+                from locations.models import DriverLocation
+                driver_loc = DriverLocation.objects.filter(journey__bus=bus).first()
+                if driver_loc and driver_loc.accuracy is not None:
+                    driver_acc = round(driver_loc.accuracy, 1)
+            except Exception:
+                pass
+
             data.append({
                 'id': bus.id,
                 'bus_number': bus.bus_number,
@@ -119,7 +128,11 @@ def bus_locations(request):
                 'route_name': bus.current_route.name if bus.current_route else 'No Route',
                 'next_stop': latest_eta.stop.name if latest_eta else None,
                 'eta': latest_eta.calculated_eta.strftime('%H:%M') if latest_eta else 'Calculating...',
-                'speed': location.speed
+                'speed': location.speed,
+                'heading': location.heading,
+                'accuracy': driver_acc,
+                'is_accurate': location.is_accurate,
+                'timestamp': location.timestamp,
             })
 
     serializer = BusMapDataSerializer(data, many=True)

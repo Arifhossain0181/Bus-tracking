@@ -43,6 +43,7 @@ export interface BusLocation {
   bus: number;
   latitude: number | string;
   longitude: number | string;
+  accuracy?: number | null;
   speed?: number | string | null;
   heading?: number | string | null;
   is_accurate?: boolean;
@@ -209,6 +210,7 @@ export interface ActiveDriverLocation {
   driver_name: string;
   latitude: number;
   longitude: number;
+  accuracy?: number | null;
   heading?: number | null;
   speed?: number | null;
   last_updated: string;

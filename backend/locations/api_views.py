@@ -1,4 +1,5 @@
 import datetime
+from decimal import Decimal
 from django.db import transaction
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
@@ -8,8 +9,8 @@ from django.utils import timezone
 from core.throttling import TelemetryRateThrottle
 from .models import DriverLocation, LocationHistory
 from .serializers import DriverLocationSerializer, LocationUpdateSerializer
-from .services import record_driver_gps
-from buses.models import Journey, BusAssignment
+from .services import record_driver_gps, _to_decimal
+from buses.models import Journey, BusAssignment, BusLocation
 from notifications.models import Notification
 from reports.services import sync_journey_to_trip_log
 
@@ -48,11 +49,97 @@ def start_journey(request):
                 'journey_id': bus_active.id
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Get initial location from request
+        # Validate coordinates if provided
         latitude = request.data.get('latitude')
         longitude = request.data.get('longitude')
+        accuracy = request.data.get('accuracy')
+        speed = request.data.get('speed')
+        heading = request.data.get('heading')
         notes = request.data.get('notes', '')
-        
+
+        dec_lat = None
+        dec_lon = None
+        has_coords = (latitude is not None or longitude is not None)
+
+        if has_coords:
+            if latitude is None or longitude is None:
+                return Response(
+                    {'error': 'Both latitude and longitude must be provided.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            dec_lat = _to_decimal(latitude, max_digits=10, decimal_places=7)
+            dec_lon = _to_decimal(longitude, max_digits=10, decimal_places=7)
+            if dec_lat is None or dec_lon is None:
+                return Response(
+                    {'error': 'Valid numeric latitude and longitude are required.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if dec_lat < Decimal('-90.0') or dec_lat > Decimal('90.0'):
+                return Response(
+                    {'error': 'Latitude must be between -90 and 90 degrees.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if dec_lon < Decimal('-180.0') or dec_lon > Decimal('180.0'):
+                return Response(
+                    {'error': 'Longitude must be between -180 and 180 degrees.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if dec_lat == Decimal('0') and dec_lon == Decimal('0'):
+                return Response(
+                    {'error': 'Invalid coordinates: Null Island (0, 0) is rejected.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Validate optional metrics
+        acc_val = None
+        if accuracy is not None:
+            try:
+                acc_val = float(accuracy)
+                if acc_val < 0 or acc_val > 5000:
+                    return Response(
+                        {'error': 'Accuracy must be between 0 and 5000 meters.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Invalid accuracy value.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        spd_val = None
+        dec_speed = None
+        if speed is not None:
+            try:
+                spd_val = float(speed)
+                if spd_val < 0 or spd_val > 150:
+                    return Response(
+                        {'error': 'Speed must be between 0 and 150 m/s.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                dec_speed = _to_decimal(speed, max_digits=5, decimal_places=2)
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Invalid speed value.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        hdg_val = None
+        dec_heading = None
+        if heading is not None:
+            try:
+                hdg_val = float(heading)
+                if hdg_val < 0 or hdg_val > 360:
+                    return Response(
+                        {'error': 'Heading must be between 0 and 360 degrees.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                dec_heading = _to_decimal(heading, max_digits=5, decimal_places=2)
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Invalid heading value.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
         # Create journey
         journey = Journey.objects.create(
             driver=request.user,
@@ -61,22 +148,54 @@ def start_journey(request):
             assignment=assignment,
             status='active',
             start_time=timezone.now(),
-            start_latitude=latitude,
-            start_longitude=longitude,
+            start_latitude=dec_lat,
+            start_longitude=dec_lon,
             notes=notes
         )
         
         # Create/update driver location with journey reference
+        defaults = {
+            'is_sharing': True,
+            'session_started': timezone.now(),
+            'journey': journey,
+        }
+        if dec_lat is not None and dec_lon is not None:
+            defaults['latitude'] = dec_lat
+            defaults['longitude'] = dec_lon
+            defaults['accuracy'] = acc_val
+            defaults['speed'] = spd_val
+            defaults['heading'] = hdg_val
+        else:
+            existing_loc = DriverLocation.objects.filter(driver=request.user).first()
+            if not existing_loc:
+                defaults['latitude'] = Decimal('0')
+                defaults['longitude'] = Decimal('0')
+
         location, created = DriverLocation.objects.update_or_create(
             driver=request.user,
-            defaults={
-                'latitude': latitude or 0,
-                'longitude': longitude or 0,
-                'is_sharing': True,
-                'session_started': timezone.now(),
-                'journey': journey
-            }
+            defaults=defaults
         )
+
+        # If coordinates provided, record to history and sync initial BusLocation
+        if dec_lat is not None and dec_lon is not None:
+            LocationHistory.objects.create(
+                driver=request.user,
+                latitude=dec_lat,
+                longitude=dec_lon,
+            )
+            is_accurate = True if acc_val is None else (acc_val <= 50.0)
+            BusLocation.objects.create(
+                bus=assignment.bus,
+                latitude=dec_lat,
+                longitude=dec_lon,
+                speed=dec_speed,
+                heading=dec_heading,
+                is_accurate=is_accurate,
+                timestamp=timezone.now(),
+            )
+            if assignment.route and assignment.bus.current_route_id != assignment.route_id:
+                assignment.bus.current_route = assignment.route
+                assignment.bus.save(update_fields=['current_route'])
         
         # Create notification for journey start
         Notification.create_journey_notification(journey, 'journey_start', request.user)
@@ -255,6 +374,7 @@ def update_location(request):
             accuracy=data.get('accuracy'),
             heading=data.get('heading'),
             speed=data.get('speed'),
+            timestamp=data.get('timestamp'),
         )
         return Response(result)
     except ValueError as e:
@@ -295,6 +415,7 @@ def get_active_locations(request):
             'longitude': float(loc.longitude),
             'heading': loc.heading,
             'speed': loc.speed,
+            'accuracy': loc.accuracy,
             'last_updated': loc.last_updated.isoformat(),
             'is_active': loc.is_active,
         }

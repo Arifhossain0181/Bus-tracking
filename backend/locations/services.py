@@ -72,13 +72,14 @@ def trigger_eta_update_if_needed(bus, route, throttle_seconds=ETA_THROTTLE_SECON
         return False
 
 
-def record_driver_gps(driver, latitude, longitude, accuracy=None, speed=None, heading=None, force_eta=False, throttle_seconds=ETA_THROTTLE_SECONDS):
+def record_driver_gps(driver, latitude, longitude, accuracy=None, speed=None, heading=None, force_eta=False, throttle_seconds=ETA_THROTTLE_SECONDS, timestamp=None):
     """
     Unified ingestion pipeline for driver GPS telemetry:
     1. Validates active journey for the driver.
     2. Atomically records DriverLocation, LocationHistory, and synchronized BusLocation.
     3. Safely triggers throttled ETA calculation without blocking or failing GPS recording.
-    4. Returns a standard status payload including bus_id for frontend tracking consumers.
+    4. Protects against out-of-order delayed packets overwriting newer live location.
+    5. Returns a standard status payload including bus_id for frontend tracking consumers.
     """
     journey = Journey.get_active_journey(driver)
     if not journey:
@@ -105,6 +106,38 @@ def record_driver_gps(driver, latitude, longitude, accuracy=None, speed=None, he
 
     # GPS accuracy threshold: <= 50 meters considered accurate
     is_accurate = True if accuracy is None else (float(accuracy) <= 50.0)
+
+    record_time = timezone.now()
+    if timestamp is not None:
+        parsed_ts = None
+        if isinstance(timestamp, str):
+            from django.utils.dateparse import parse_datetime
+            parsed_ts = parse_datetime(timestamp)
+        elif hasattr(timestamp, 'strftime'):
+            parsed_ts = timestamp
+
+        if parsed_ts is not None:
+            if timezone.is_naive(parsed_ts):
+                parsed_ts = timezone.make_aware(parsed_ts)
+
+            # Check for out-of-order telemetry:
+            # If live location has a newer timestamp (>2s), do not overwrite live state
+            existing_loc = DriverLocation.objects.filter(driver=driver).first()
+            if existing_loc and existing_loc.last_updated:
+                if parsed_ts < (existing_loc.last_updated - timezone.timedelta(seconds=2)):
+                    logger.warning(
+                        "Ignored out-of-order GPS packet for driver %s (packet=%s, live=%s)",
+                        driver.username, parsed_ts.isoformat(), existing_loc.last_updated.isoformat()
+                    )
+                    return {
+                        'status': 'ignored',
+                        'message': 'Out-of-order GPS update ignored for live state.',
+                        'timestamp': existing_loc.last_updated.isoformat(),
+                        'bus_id': journey.bus.id,
+                        'bus_location_id': None,
+                        'eta_updated': False,
+                    }
+            record_time = parsed_ts
 
     with transaction.atomic():
         # 1. Update or create DriverLocation
@@ -137,7 +170,7 @@ def record_driver_gps(driver, latitude, longitude, accuracy=None, speed=None, he
             speed=dec_speed,
             heading=dec_heading,
             is_accurate=is_accurate,
-            timestamp=timezone.now(),
+            timestamp=record_time,
         )
 
         # Ensure bus points to active route if not already set
