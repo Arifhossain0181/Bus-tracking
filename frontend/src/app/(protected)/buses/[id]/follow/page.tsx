@@ -324,6 +324,7 @@ export default function FollowBusPage() {
         nextStopName={latestEta?.stop_name}
         etaDisplay={formattedEta}
         heightClass="h-[420px] sm:h-[500px] md:h-[580px]"
+        routeName={bus?.route_name || undefined}
       />
     </div>
   );

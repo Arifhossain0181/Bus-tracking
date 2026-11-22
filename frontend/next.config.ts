@@ -8,6 +8,18 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
+  async rewrites() {
+    return [
+      {
+        source: '/univerity.app',
+        destination: '/live-map',
+      },
+      {
+        source: '/university.app',
+        destination: '/live-map',
+      },
+    ];
+  },
 };
 
 export default nextConfig;
