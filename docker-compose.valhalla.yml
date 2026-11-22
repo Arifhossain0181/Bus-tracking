@@ -1,0 +1,22 @@
+# UBus — Local Development Valhalla Routing Engine
+# Usage:
+#   docker compose -f docker-compose.valhalla.yml up -d
+# Documentation:
+#   See VALHALLA_SETUP.md for building Bangladesh OSM routing tiles.
+
+services:
+  valhalla:
+    image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
+    container_name: ubus-valhalla-dev
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./custom_valhalla_data:/custom_files
+    environment:
+      # Elevation processing is disabled to conserve RAM and build time
+      - build_elevation=False
+      - build_admins=True
+      - build_time_zones=True
+      - force_rebuild=False
+      - server_threads=2
+    restart: unless-stopped

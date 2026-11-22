@@ -141,10 +141,15 @@ def start_journey(request):
                 )
 
         # Create journey
+        active_rev = None
+        if assignment.route and hasattr(assignment.route, 'active_revision') and assignment.route.active_revision:
+            if assignment.route.active_revision.status == 'published':
+                active_rev = assignment.route.active_revision
         journey = Journey.objects.create(
             driver=request.user,
             bus=assignment.bus,
             route=assignment.route,
+            route_revision=active_rev,
             assignment=assignment,
             status='active',
             start_time=timezone.now(),

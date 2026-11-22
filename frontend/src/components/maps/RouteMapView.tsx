@@ -7,6 +7,7 @@ import type { Stop } from '@/lib/types';
 interface Props {
   stops: Stop[];
   color?: string;
+  activeGeometry?: { type: 'LineString'; coordinates: [number, number][] } | null;
   onMapClick?: (lat: number, lng: number) => void;
   pickedCoords?: [number, number] | null;
   heightClass?: string;
@@ -17,6 +18,7 @@ const DEFAULT_CENTER: [number, number] = [23.8103, 90.4125];
 export default function RouteMapView({
   stops,
   color = '#2563eb',
+  activeGeometry = null,
   onMapClick,
   pickedCoords,
   heightClass = 'h-80',
@@ -61,12 +63,12 @@ export default function RouteMapView({
     if (!map || !group) return;
     group.clearLayers();
 
-    const coords: [number, number][] = [];
+    const stopCoords: [number, number][] = [];
     stops.forEach((s, idx) => {
       const lat = Number(s.latitude);
       const lng = Number(s.longitude);
       if (Number.isNaN(lat) || Number.isNaN(lng)) return;
-      coords.push([lat, lng]);
+      stopCoords.push([lat, lng]);
       L.circleMarker([lat, lng], {
         radius: s.is_major_stop ? 9 : 6,
         fillColor: s.is_major_stop ? '#ef4444' : color,
@@ -82,14 +84,28 @@ export default function RouteMapView({
         .addTo(group);
     });
 
-    if (coords.length >= 2) {
-      L.polyline(coords, { color, weight: 4, opacity: 0.85 }).addTo(group);
+    // Check if active_geometry is provided
+    let geometryCoords: [number, number][] = [];
+    if (activeGeometry && activeGeometry.type === 'LineString' && Array.isArray(activeGeometry.coordinates)) {
+      geometryCoords = activeGeometry.coordinates
+        .filter((c) => Array.isArray(c) && c.length >= 2 && !Number.isNaN(c[0]) && !Number.isNaN(c[1]))
+        .map((c) => [c[1], c[0]]); // GeoJSON [lng, lat] -> Leaflet [lat, lng]
     }
-    if (coords.length > 0) {
-      const bounds = L.latLngBounds(coords);
+
+    if (geometryCoords.length >= 2) {
+      // Draw road geometry polyline
+      L.polyline(geometryCoords, { color, weight: 5, opacity: 0.9 }).addTo(group);
+    } else if (stopCoords.length >= 2) {
+      // Graceful fallback to connecting stops directly with dashed line
+      L.polyline(stopCoords, { color, weight: 3, opacity: 0.7, dashArray: '6, 6' }).addTo(group);
+    }
+
+    const allCoords = geometryCoords.length > 0 ? geometryCoords : stopCoords;
+    if (allCoords.length > 0) {
+      const bounds = L.latLngBounds(allCoords);
       map.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 });
     }
-  }, [stops, color]);
+  }, [stops, color, activeGeometry]);
 
   useEffect(() => {
     const map = mapRef.current;

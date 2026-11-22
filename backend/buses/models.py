@@ -199,6 +199,14 @@ class Journey(models.Model):
     driver = models.ForeignKey(User, on_delete=models.CASCADE, related_name='journeys')
     bus = models.ForeignKey(Bus, on_delete=models.CASCADE, related_name='journeys')
     route = models.ForeignKey('schedules.Route', on_delete=models.CASCADE, related_name='journeys')
+    route_revision = models.ForeignKey(
+        'schedules.RouteRevision',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='journeys',
+        help_text='The specific route revision active when this journey was run'
+    )
     assignment = models.ForeignKey(BusAssignment, on_delete=models.SET_NULL, null=True, blank=True, related_name='journeys')
     status = models.CharField(max_length=20, choices=JOURNEY_STATUS_CHOICES, default='active')
     start_time = models.DateTimeField(default=timezone.now)
@@ -243,9 +251,27 @@ class Journey(models.Model):
 
     def clean(self):
         super().clean()
+        from django.core.exceptions import ValidationError
         if self.start_time and self.end_time and self.end_time < self.start_time:
-            from django.core.exceptions import ValidationError
             raise ValidationError({'end_time': 'End time cannot be earlier than start time.'})
+        if self.route_revision_id:
+            if self.route_id and self.route_revision.route_id != self.route_id:
+                raise ValidationError({'route_revision': 'Route revision must belong to the same route as the journey.'})
+            if not self.pk and self.route_revision.status != 'published':
+                raise ValidationError({'route_revision': 'New journeys can only be bound to an active published route revision.'})
+            elif self.pk and self.route_revision.status == 'draft':
+                raise ValidationError({'route_revision': 'A draft route revision cannot be bound to a journey. Only published revisions are permitted.'})
+
+    def save(self, *args, **kwargs):
+        from django.core.exceptions import ValidationError
+        if self.route_revision_id:
+            if self.route_id and self.route_revision.route_id != self.route_id:
+                raise ValidationError({'route_revision': 'Route revision must belong to the same route as the journey.'})
+            if not self.pk and self.route_revision.status != 'published':
+                raise ValidationError({'route_revision': 'New journeys can only be bound to an active published route revision.'})
+            elif self.pk and self.route_revision.status == 'draft':
+                raise ValidationError({'route_revision': 'A draft route revision cannot be bound to a journey. Only published revisions are permitted.'})
+        super().save(*args, **kwargs)
 
     @classmethod
     def get_active_journey(cls, driver):

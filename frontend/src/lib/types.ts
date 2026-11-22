@@ -159,6 +159,25 @@ export interface Trip {
   stop_times?: TripStopTime[];
 }
 
+export interface RouteRevision {
+  id: number;
+  route: number;
+  revision_number: number;
+  status: 'draft' | 'published' | 'archived';
+  geometry: {
+    type: 'LineString';
+    coordinates: [number, number][];
+  } | null;
+  distance_km: number | string | null;
+  duration_mins: number | null;
+  metadata?: Record<string, unknown> | null;
+  change_summary?: string;
+  created_by?: number | null;
+  created_by_name?: string | null;
+  created_at: string;
+  published_at?: string | null;
+}
+
 export interface RouteAssignmentSummary {
   id: number;
   bus_id: number;
@@ -184,6 +203,9 @@ export interface RouteItem {
   custom_days?: string;
   origin_name?: string;
   destination_name?: string;
+  active_revision?: RouteRevision | null;
+  active_geometry?: { type: 'LineString'; coordinates: [number, number][] } | null;
+  revisions_count?: number;
   stops: Stop[];
   trips: Trip[];
   stops_count?: number;

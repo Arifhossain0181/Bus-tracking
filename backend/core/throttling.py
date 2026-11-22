@@ -29,3 +29,17 @@ class TelemetryRateThrottle(UserRateThrottle):
             return self.rate
         rates = getattr(api_settings, 'DEFAULT_THROTTLE_RATES', {})
         return rates.get(self.scope, '60/minute')
+
+
+class RoutingRateThrottle(UserRateThrottle):
+    """
+    Limits on-demand road route geometry preview generation per administrative user.
+    Prevents denial-of-service or runaway requests to upstream routing engines.
+    """
+    scope = 'routing'
+
+    def get_rate(self):
+        if getattr(self, 'rate', None):
+            return self.rate
+        rates = getattr(api_settings, 'DEFAULT_THROTTLE_RATES', {})
+        return rates.get(self.scope, '30/minute')

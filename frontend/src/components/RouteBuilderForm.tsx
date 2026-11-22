@@ -1,10 +1,16 @@
 'use client';
 
 import React, { useState } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
-import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, MapPin, Plus, Trash2, X } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import type { RouteItem } from '@/lib/types';
+
+const StopLocationPickerModal = dynamic(
+  () => import('@/components/maps/StopLocationPickerModal'),
+  { ssr: false }
+);
 
 interface TripDraft {
   id?: number;
@@ -62,17 +68,19 @@ export function RouteBuilderForm({ existing }: { existing?: RouteItem }) {
       : [{ trip_number: 1, name: 'Trip 01', departure_time: '08:00', arrival_time: '08:30' }]
   );
 
+  const [pickerStopIndex, setPickerStopIndex] = useState<number | null>(null);
+
   const [stops, setStops] = useState<StopDraft[]>(
     existing?.stops?.length
       ? existing.stops.map((s) => ({
           id: s.id,
           name: s.name,
           scheduled_time: s.scheduled_time ? s.scheduled_time.slice(0, 5) : '',
-          latitude: String(s.latitude ?? '23.8103'),
-          longitude: String(s.longitude ?? '90.4125'),
+          latitude: s.latitude != null ? String(s.latitude) : '',
+          longitude: s.longitude != null ? String(s.longitude) : '',
           is_major_stop: s.is_major_stop,
         }))
-      : [{ name: '', scheduled_time: '07:30', latitude: '23.8103', longitude: '90.4125', is_major_stop: false }]
+      : [{ name: '', scheduled_time: '07:30', latitude: '', longitude: '', is_major_stop: false }]
   );
 
   const [error, setError] = useState('');
@@ -108,8 +116,29 @@ export function RouteBuilderForm({ existing }: { existing?: RouteItem }) {
   const addStop = () => {
     setStops((prev) => [
       ...prev,
-      { name: '', scheduled_time: '', latitude: '23.8103', longitude: '90.4125', is_major_stop: false },
+      { name: '', scheduled_time: '', latitude: '', longitude: '', is_major_stop: false },
     ]);
+  };
+
+  const handleSaveStopLocation = (lat: number, lng: number) => {
+    if (pickerStopIndex === null) return;
+    setStops((prev) =>
+      prev.map((item, i) =>
+        i === pickerStopIndex
+          ? { ...item, latitude: String(lat), longitude: String(lng) }
+          : item
+      )
+    );
+  };
+
+  const handleClearStopLocation = (idx?: number) => {
+    const targetIdx = idx !== undefined ? idx : pickerStopIndex;
+    if (targetIdx === null || targetIdx === undefined) return;
+    setStops((prev) =>
+      prev.map((item, i) =>
+        i === targetIdx ? { ...item, latitude: '', longitude: '' } : item
+      )
+    );
   };
 
   const moveStop = (idx: number, dir: -1 | 1) => {
@@ -156,8 +185,8 @@ export function RouteBuilderForm({ existing }: { existing?: RouteItem }) {
         id: s.id,
         name: s.name.trim(),
         scheduled_time: s.scheduled_time || null,
-        latitude: Number(s.latitude) || 23.8103,
-        longitude: Number(s.longitude) || 90.4125,
+        latitude: s.latitude ? Number(s.latitude) : 23.8103,
+        longitude: s.longitude ? Number(s.longitude) : 90.4125,
         order: idx + 1,
         is_major_stop: s.is_major_stop,
       }));
@@ -411,31 +440,40 @@ export function RouteBuilderForm({ existing }: { existing?: RouteItem }) {
                     className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-sm bg-white"
                   />
                 </div>
-                <div className="md:col-span-3 flex gap-1.5">
-                  <input
-                    type="number"
-                    step="0.000001"
-                    placeholder="Lat"
-                    value={s.latitude}
-                    onChange={(e) =>
-                      setStops((prev) =>
-                        prev.map((item, i) => (i === idx ? { ...item, latitude: e.target.value } : item))
-                      )
-                    }
-                    className="w-1/2 px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white"
-                  />
-                  <input
-                    type="number"
-                    step="0.000001"
-                    placeholder="Lng"
-                    value={s.longitude}
-                    onChange={(e) =>
-                      setStops((prev) =>
-                        prev.map((item, i) => (i === idx ? { ...item, longitude: e.target.value } : item))
-                      )
-                    }
-                    className="w-1/2 px-2 py-1.5 border border-slate-300 rounded-lg text-xs bg-white"
-                  />
+                <div className="md:col-span-3 flex items-center">
+                  {s.latitude && s.longitude ? (
+                    <div className="flex items-center gap-1.5 w-full">
+                      <button
+                        type="button"
+                        onClick={() => setPickerStopIndex(idx)}
+                        className="flex-1 inline-flex items-center justify-between px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 text-xs font-medium hover:bg-emerald-100 transition-colors"
+                        title={`Location on map: ${Number(s.latitude).toFixed(4)}, ${Number(s.longitude).toFixed(4)}`}
+                      >
+                        <span className="inline-flex items-center gap-1.5 truncate">
+                          <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span className="truncate">Location Set</span>
+                        </span>
+                        <span className="text-[10px] text-emerald-700 underline shrink-0 ml-1">Change</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleClearStopLocation(idx)}
+                        className="p-1 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                        title="Clear map location"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setPickerStopIndex(idx)}
+                      className="w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-dashed border-slate-300 bg-white text-slate-600 text-xs font-medium hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/50 transition-colors"
+                    >
+                      <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Pick on Map (Optional)</span>
+                    </button>
+                  )}
                 </div>
                 <div className="md:col-span-2 flex justify-end gap-1">
                   <button
@@ -540,6 +578,19 @@ export function RouteBuilderForm({ existing }: { existing?: RouteItem }) {
           Cancel
         </button>
       </div>
+
+      {pickerStopIndex !== null && stops[pickerStopIndex] && (
+        <StopLocationPickerModal
+          isOpen={pickerStopIndex !== null}
+          stopName={stops[pickerStopIndex].name}
+          stopOrder={pickerStopIndex + 1}
+          initialLat={stops[pickerStopIndex].latitude ? Number(stops[pickerStopIndex].latitude) : null}
+          initialLng={stops[pickerStopIndex].longitude ? Number(stops[pickerStopIndex].longitude) : null}
+          onSave={handleSaveStopLocation}
+          onClear={() => handleClearStopLocation()}
+          onClose={() => setPickerStopIndex(null)}
+        />
+      )}
     </form>
   );
 }

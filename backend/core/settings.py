@@ -122,6 +122,7 @@ REST_FRAMEWORK = {
         'user': os.getenv('THROTTLE_USER_RATE', '600/minute'),
         'auth': os.getenv('THROTTLE_AUTH_RATE', '15/minute'),
         'telemetry': os.getenv('THROTTLE_TELEMETRY_RATE', '60/minute'),
+        'routing': os.getenv('THROTTLE_ROUTING_RATE', '30/minute'),
     },
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
@@ -169,3 +170,8 @@ if os.getenv('CLOUDINARY_URL'):
         'API_KEY': os.getenv('CLOUDINARY_API_KEY'),
         'API_SECRET': os.getenv('CLOUDINARY_API_SECRET'),
     }
+
+# Routing engine configuration (Task 017)
+VALHALLA_URL = os.getenv('VALHALLA_URL', 'http://localhost:8002')
+VALHALLA_TIMEOUT = float(os.getenv('VALHALLA_TIMEOUT', '10.0'))
+ROUTING_PROVIDER = os.getenv('ROUTING_PROVIDER', 'valhalla')
