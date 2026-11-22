@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Bus, Edit, Globe, Lock, Map, MapPin, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Bus, Globe, Lock, Map, MapPin, Plus, Trash2 } from 'lucide-react';
 import { useAuth } from '@/components/AuthProvider';
 import { apiFetch } from '@/lib/api';
 import type { RouteItem } from '@/lib/types';
@@ -148,18 +148,11 @@ export default function RouteDetailPage() {
               {route.is_published ? 'Unpublish' : 'Publish'}
             </button>
             <Link
-              href={`/routes/${route.id}/builder`}
-              className="px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 inline-flex items-center gap-1.5"
+              href={`/routes/${route.id}/edit`}
+              className="px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 inline-flex items-center gap-1.5 shadow-sm"
             >
               <Map className="w-3.5 h-3.5" />
-              Route Builder
-            </Link>
-            <Link
-              href={`/routes/${route.id}/edit`}
-              className="px-3.5 py-2 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 inline-flex items-center gap-1.5"
-            >
-              <Edit className="w-3.5 h-3.5" />
-              Edit Route
+              Route Builder & Editor
             </Link>
             <button
               type="button"

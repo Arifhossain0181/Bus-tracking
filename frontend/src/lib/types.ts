@@ -198,6 +198,7 @@ export interface RouteItem {
   is_published: boolean;
   total_distance_km?: number | string;
   estimated_duration_mins?: number | string;
+  metadata?: Record<string, unknown> | null;
   service_days?: string;
   service_days_display?: string;
   custom_days?: string;
