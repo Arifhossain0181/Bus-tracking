@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
-import L from 'leaflet';
+import React, { useMemo } from 'react';
 import type { Stop } from '@/lib/types';
+import Map3DView, { type StopPoint } from './Map3DView';
 
 interface Props {
   stops: Stop[];
@@ -12,105 +12,50 @@ interface Props {
   heightClass?: string;
 }
 
-const DEFAULT_CENTER: [number, number] = [23.8103, 90.4125];
-
 export default function RouteMapView({
   stops,
-  color = '#2563eb',
   onMapClick,
   pickedCoords,
-  heightClass = 'h-80',
+  heightClass = 'h-96',
 }: Props) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<L.Map | null>(null);
-  const layerGroupRef = useRef<L.LayerGroup | null>(null);
-  const pickMarkerRef = useRef<L.CircleMarker | null>(null);
+  // Convert stops to route path [lng, lat][]
+  const routePath: [number, number][] = useMemo(() => {
+    return stops
+      .filter((s) => s.latitude && s.longitude)
+      .map((s) => [Number(s.longitude), Number(s.latitude)]);
+  }, [stops]);
 
-  useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
-    const map = L.map(containerRef.current).setView(DEFAULT_CENTER, 13);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
-    }).addTo(map);
-    layerGroupRef.current = L.layerGroup().addTo(map);
-    mapRef.current = map;
+  // Convert stops to StopPoint[]
+  const stopPoints: StopPoint[] = useMemo(() => {
+    return stops.map((s) => ({
+      id: s.id,
+      name: s.name,
+      latitude: Number(s.latitude),
+      longitude: Number(s.longitude),
+      order: s.order,
+      scheduledTime: s.scheduled_time,
+      isMajor: s.is_major_stop,
+    }));
+  }, [stops]);
 
-    return () => {
-      map.remove();
-      mapRef.current = null;
-      layerGroupRef.current = null;
-      pickMarkerRef.current = null;
-    };
-  }, []);
+  return (
+    <div className="relative w-full">
+      <Map3DView
+        routePath={routePath}
+        stops={stopPoints}
+        heightClass={heightClass}
+        onMapClick={onMapClick}
+        showOverlayCards={false}
+      />
 
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !onMapClick) return;
-    const handler = (e: L.LeafletMouseEvent) => {
-      onMapClick(Number(e.latlng.lat.toFixed(7)), Number(e.latlng.lng.toFixed(7)));
-    };
-    map.on('click', handler);
-    return () => {
-      map.off('click', handler);
-    };
-  }, [onMapClick]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    const group = layerGroupRef.current;
-    if (!map || !group) return;
-    group.clearLayers();
-
-    const coords: [number, number][] = [];
-    stops.forEach((s, idx) => {
-      const lat = Number(s.latitude);
-      const lng = Number(s.longitude);
-      if (Number.isNaN(lat) || Number.isNaN(lng)) return;
-      coords.push([lat, lng]);
-      L.circleMarker([lat, lng], {
-        radius: s.is_major_stop ? 9 : 6,
-        fillColor: s.is_major_stop ? '#ef4444' : color,
-        color: '#ffffff',
-        weight: 2,
-        fillOpacity: 0.95,
-      })
-        .bindPopup(
-          `<strong>#${idx + 1} ${s.name}</strong>${
-            s.scheduled_time ? `<br/>Scheduled: ${s.scheduled_time}` : ''
-          }`
-        )
-        .addTo(group);
-    });
-
-    if (coords.length >= 2) {
-      L.polyline(coords, { color, weight: 4, opacity: 0.85 }).addTo(group);
-    }
-    if (coords.length > 0) {
-      const bounds = L.latLngBounds(coords);
-      map.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 });
-    }
-  }, [stops, color]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    if (pickMarkerRef.current) {
-      map.removeLayer(pickMarkerRef.current);
-      pickMarkerRef.current = null;
-    }
-    if (pickedCoords) {
-      pickMarkerRef.current = L.circleMarker(pickedCoords, {
-        radius: 8,
-        fillColor: '#16a34a',
-        color: '#ffffff',
-        weight: 2,
-        fillOpacity: 1,
-      })
-        .addTo(map)
-        .bindPopup('Selected Stop Location')
-        .openPopup();
-    }
-  }, [pickedCoords]);
-
-  return <div ref={containerRef} className={`w-full rounded-xl overflow-hidden border border-slate-200 ${heightClass}`} />;
+      {pickedCoords && (
+        <div className="absolute bottom-4 left-5 z-20 px-3 py-1.5 rounded-xl bg-slate-900/90 backdrop-blur-md border border-cyan-500/40 text-xs font-semibold text-cyan-300 shadow-xl flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
+          <span>
+            Selected: {pickedCoords[0].toFixed(5)}, {pickedCoords[1].toFixed(5)}
+          </span>
+        </div>
+      )}
+    </div>
+  );
 }

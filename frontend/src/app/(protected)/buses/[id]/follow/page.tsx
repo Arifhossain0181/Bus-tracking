@@ -221,6 +221,7 @@ export default function FollowBusPage() {
         heading={headingDeg}
         speed={rawSpeed}
         isAccurate={statusInfo.isAccurate}
+        routeName={bus?.route_name || undefined}
       />
     </div>
   );
