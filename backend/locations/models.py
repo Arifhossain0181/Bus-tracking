@@ -96,3 +96,60 @@ class LocationHistory(models.Model):
 
     def __str__(self):
         return f"{self.driver.username} - {self.timestamp}"
+
+
+class ArchivedLocationHistory(models.Model):
+    """
+    Cold/archival storage for historical driver GPS coordinates.
+    Stores records copied from LocationHistory older than the retention cutoff (e.g. 14 days).
+    Preserves original identifiers, exact coordinate precision, and audit traceability.
+    """
+    original_id = models.BigIntegerField(
+        unique=True,
+        db_index=True,
+        help_text="Primary key ID of the original LocationHistory record"
+    )
+    driver = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='archived_location_history'
+    )
+    driver_username = models.CharField(
+        max_length=150,
+        blank=True,
+        help_text="Snapshot of driver username for audit traceability"
+    )
+    latitude = models.DecimalField(max_digits=10, decimal_places=7)
+    longitude = models.DecimalField(max_digits=10, decimal_places=7)
+    timestamp = models.DateTimeField(
+        db_index=True,
+        help_text="Original GPS coordinate timestamp"
+    )
+    archived_at = models.DateTimeField(
+        default=timezone.now,
+        db_index=True,
+        help_text="Timestamp when this record was copied to archive"
+    )
+    archive_batch_id = models.CharField(
+        max_length=64,
+        blank=True,
+        db_index=True,
+        help_text="Batch identifier for this archival run"
+    )
+
+    class Meta:
+        db_table = 'driver_location_history_archive'
+        ordering = ['-timestamp']
+        verbose_name = 'Archived Location History'
+        verbose_name_plural = 'Archived Location Histories'
+        indexes = [
+            models.Index(fields=['driver', '-timestamp']),
+            models.Index(fields=['timestamp']),
+            models.Index(fields=['archive_batch_id']),
+        ]
+
+    def __str__(self):
+        return f"[Archive #{self.original_id}] {self.driver_username or self.driver_id} @ {self.timestamp}"
+

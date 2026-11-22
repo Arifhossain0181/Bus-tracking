@@ -6,11 +6,13 @@
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node --experimental-strip-types --test src/lib/__tests__/*.test.ts"
   },
   "dependencies": {
     "leaflet": "^1.9.4",
     "lucide-react": "^1.75.0",
+    "maplibre-gl": "^6.19.0",
     "next": "15.5.29",
     "react": "19.1.0",
     "react-dom": "19.1.0"

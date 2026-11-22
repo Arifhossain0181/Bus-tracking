@@ -1,3 +1,5 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from .models import User, DriverProfile
 from .models_feedback import Feedback
@@ -41,11 +43,26 @@ class UserSerializer(serializers.ModelSerializer):
             return obj.profile_picture.url
         return None
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        is_owner = request and request.user and request.user.is_authenticated and request.user.id == instance.id
+        is_admin = request and request.user and request.user.is_authenticated and request.user.is_admin_user
+        # Do not expose sensitive personal identification to third parties
+        if not (is_owner or is_admin):
+            data.pop('nid_number', None)
+            data.pop('address', None)
+            if 'driver_profile' in data and data['driver_profile']:
+                data['driver_profile'].pop('emergency_contact', None)
+                data['driver_profile'].pop('license_number', None)
+        return data
+
 
 class RegisterSerializer(serializers.Serializer):
     full_name = serializers.CharField(max_length=150)
     username = serializers.CharField(max_length=150)
     university_id = serializers.CharField(max_length=50)
+    password = serializers.CharField(write_only=True, min_length=8)
     role = serializers.ChoiceField(choices=[('student', 'Student'), ('faculty', 'Faculty'), ('staff', 'Staff')])
 
     def validate_username(self, value):
@@ -62,6 +79,30 @@ class RegisterSerializer(serializers.Serializer):
             raise serializers.ValidationError('This University ID is already registered.')
         return value
 
+    def validate(self, attrs):
+        password = attrs.get('password')
+        university_id = attrs.get('university_id')
+        username = attrs.get('username')
+
+        if password:
+            # Disallow predictable passwords derived from public university identifiers
+            if university_id and password.strip().lower() == university_id.strip().lower():
+                raise serializers.ValidationError({
+                    'password': 'Password cannot be identical to your University ID.'
+                })
+            if username and password.strip().lower() == username.strip().lower():
+                raise serializers.ValidationError({
+                    'password': 'Password cannot be identical to your username.'
+                })
+
+            temp_user = User(username=username or '', university_id=university_id or '')
+            try:
+                validate_password(password, user=temp_user)
+            except DjangoValidationError as err:
+                raise serializers.ValidationError({'password': list(err.messages)})
+
+        return attrs
+
     def create(self, validated_data):
         full_name = validated_data['full_name'].strip()
         parts = full_name.split(' ', 1)
@@ -76,7 +117,7 @@ class RegisterSerializer(serializers.Serializer):
             approval_status='pending',
             is_active=False,
         )
-        user.set_password(validated_data['university_id'])
+        user.set_password(validated_data['password'])
         user.save()
         return user
 

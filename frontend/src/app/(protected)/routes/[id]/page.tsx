@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Bus, Edit, Globe, Lock, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Bus, Globe, Lock, Map, MapPin, Plus, Trash2 } from 'lucide-react';
 import { useAuth } from '@/components/AuthProvider';
 import { apiFetch } from '@/lib/api';
 import type { RouteItem } from '@/lib/types';
@@ -36,8 +36,8 @@ export default function RouteDetailPage() {
   const [showAddStop, setShowAddStop] = useState(false);
   const [stopName, setStopName] = useState('');
   const [stopTime, setStopTime] = useState('');
-  const [stopLat, setStopLat] = useState('23.8103');
-  const [stopLng, setStopLng] = useState('90.4125');
+  const [stopLat, setStopLat] = useState('');
+  const [stopLng, setStopLng] = useState('');
   const [stopMajor, setStopMajor] = useState(false);
 
   const loadRoute = useCallback(async () => {
@@ -95,14 +95,16 @@ export default function RouteDetailPage() {
       method: 'POST',
       body: JSON.stringify({
         name: stopName.trim(),
-        latitude: Number(stopLat),
-        longitude: Number(stopLng),
+        latitude: stopLat ? Number(stopLat) : 23.8103,
+        longitude: stopLng ? Number(stopLng) : 90.4125,
         scheduled_time: stopTime || null,
         is_major_stop: stopMajor,
       }),
     });
     setStopName('');
     setStopTime('');
+    setStopLat('');
+    setStopLng('');
     setShowAddStop(false);
     loadRoute();
   };
@@ -147,10 +149,10 @@ export default function RouteDetailPage() {
             </button>
             <Link
               href={`/routes/${route.id}/edit`}
-              className="px-3.5 py-2 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 inline-flex items-center gap-1.5"
+              className="px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 inline-flex items-center gap-1.5 shadow-sm"
             >
-              <Edit className="w-3.5 h-3.5" />
-              Edit Route
+              <Map className="w-3.5 h-3.5" />
+              Route Builder & Editor
             </Link>
             <button
               type="button"
@@ -205,6 +207,34 @@ export default function RouteDetailPage() {
                   <strong>{route.estimated_duration_mins} mins</strong>
                 </div>
               )}
+              <div className="pt-2 border-t border-slate-100 space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500">Geometry Revision:</span>
+                  {route.active_revision ? (
+                    <span className="font-semibold text-emerald-700">
+                      Rev #{route.active_revision.revision_number} (Active)
+                    </span>
+                  ) : (
+                    <span className="text-slate-400">None (Schematic)</span>
+                  )}
+                </div>
+                {route.active_revision?.distance_km && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-500">Path Distance:</span>
+                    <span className="font-semibold text-slate-700">
+                      {route.active_revision.distance_km} km
+                    </span>
+                  </div>
+                )}
+                {user?.role === 'admin' && (
+                  <Link
+                    href={`/routes/${route.id}/builder`}
+                    className="inline-block mt-1 text-xs text-indigo-600 hover:text-indigo-800 font-semibold"
+                  >
+                    Open Visual Route Builder &rarr;
+                  </Link>
+                )}
+              </div>
               {route.description && <p className="text-xs text-slate-500 pt-2">{route.description}</p>}
             </div>
           </div>
@@ -254,6 +284,7 @@ export default function RouteDetailPage() {
             <RouteMapView
               stops={route.stops}
               color={route.color || '#2563eb'}
+              activeGeometry={route.active_geometry || route.active_revision?.geometry}
               onMapClick={
                 showAddStop
                   ? (lat, lng) => {
@@ -262,7 +293,7 @@ export default function RouteDetailPage() {
                     }
                   : undefined
               }
-              pickedCoords={showAddStop ? [Number(stopLat), Number(stopLng)] : null}
+              pickedCoords={showAddStop && stopLat && stopLng ? [Number(stopLat), Number(stopLng)] : null}
             />
           </div>
 
@@ -298,24 +329,32 @@ export default function RouteDetailPage() {
                   onChange={(e) => setStopTime(e.target.value)}
                   className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
                 />
-                <input
-                  type="number"
-                  step="0.000001"
-                  required
-                  placeholder="Latitude"
-                  value={stopLat}
-                  onChange={(e) => setStopLat(e.target.value)}
-                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
-                />
-                <input
-                  type="number"
-                  step="0.000001"
-                  required
-                  placeholder="Longitude"
-                  value={stopLng}
-                  onChange={(e) => setStopLng(e.target.value)}
-                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
-                />
+                <div className="sm:col-span-2 flex items-center justify-between p-2.5 rounded-lg bg-white border border-slate-200 text-xs">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />
+                    {stopLat && stopLng ? (
+                      <span className="text-emerald-800 font-medium">
+                        Picked on Map: {Number(stopLat).toFixed(5)}, {Number(stopLng).toFixed(5)}
+                      </span>
+                    ) : (
+                      <span className="text-slate-500">
+                        Click on the route map above to pick location pin (Optional)
+                      </span>
+                    )}
+                  </div>
+                  {stopLat && stopLng && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStopLat('');
+                        setStopLng('');
+                      }}
+                      className="text-xs text-red-600 hover:text-red-700 underline font-medium"
+                    >
+                      Clear Pin
+                    </button>
+                  )}
+                </div>
                 <label className="flex items-center gap-2 text-xs text-slate-700">
                   <input
                     type="checkbox"

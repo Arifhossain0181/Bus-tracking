@@ -204,7 +204,6 @@ for name, trip_type, dep, arr, order in trip_data_route1:
         route=route1,
         name=name,
         defaults={
-            'trip_type': trip_type,
             'departure_time': dep,
             'arrival_time': arr,
             'is_active': True,
@@ -232,7 +231,6 @@ for name, trip_type, dep, arr, order in trip_data_route2[:20]:  # Limit to first
         route=route2,
         name=name,
         defaults={
-            'trip_type': trip_type,
             'departure_time': dep,
             'arrival_time': arr,
             'is_active': True,
@@ -259,7 +257,6 @@ for name, trip_type, dep, arr, order in trip_data_route3:
         route=route3,
         name=name,
         defaults={
-            'trip_type': trip_type,
             'departure_time': dep,
             'arrival_time': arr,
             'is_active': True,
@@ -292,7 +289,6 @@ for name, trip_type, dep, arr, order in trip_data_route4:
         route=route4,
         name=name,
         defaults={
-            'trip_type': trip_type,
             'departure_time': dep,
             'arrival_time': arr,
             'is_active': True,

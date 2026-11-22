@@ -6,7 +6,8 @@ Pillow>=10.0.0
 
 # Database (optional - for production)
 # psycopg2-binary>=2.9.9  # PostgreSQL
-# mysqlclient>=2.2.0      # MySQL
+# mysqlclient>=2.2.0      # MySQL (requires C build tools)
+pymysql>=1.1.0            # MySQL (Pure Python, ideal for cPanel)
 dj-database-url>=1.0.0
 
 # Development utilities

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Bus, BusLocation, BusAssignment, ETACalculation
+from .models import Bus, BusLocation, BusAssignment, ETACalculation, Journey
 
 @admin.register(Bus)
 class BusAdmin(admin.ModelAdmin):
@@ -23,3 +23,11 @@ class BusAssignmentAdmin(admin.ModelAdmin):
 class ETACalculationAdmin(admin.ModelAdmin):
     list_display = ('bus', 'stop', 'calculated_eta', 'is_delayed', 'delay_minutes')
     list_filter = ('is_delayed',)
+
+@admin.register(Journey)
+class JourneyAdmin(admin.ModelAdmin):
+    list_display = ('id', 'driver', 'bus', 'route', 'status', 'start_time', 'end_time', 'duration_minutes')
+    list_filter = ('status', 'start_time', 'route', 'bus')
+    search_fields = ('driver__username', 'bus__bus_number', 'route__name')
+    date_hierarchy = 'start_time'
+    readonly_fields = ('created_at',)

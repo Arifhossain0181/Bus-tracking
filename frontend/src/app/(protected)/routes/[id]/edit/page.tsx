@@ -30,9 +30,12 @@ export default function EditRoutePage() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Edit Route: {route.name}</h1>
-        <p className="text-sm text-slate-500">Update route configuration, trips, or pickup points</p>
+        <h1 className="text-2xl font-bold text-slate-900">Route Builder & Editor: {route.name}</h1>
+        <p className="text-sm text-slate-500">
+          Update route configuration, trips, pickup stops, and visual road-following geometry in one place
+        </p>
       </div>
+
       <RouteBuilderForm existing={route} />
     </div>
   );

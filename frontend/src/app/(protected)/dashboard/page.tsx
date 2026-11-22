@@ -18,6 +18,7 @@ import {
 import { useAuth } from '@/components/AuthProvider';
 import { apiFetch, ApiError } from '@/lib/api';
 import type { DriverLocationStatus } from '@/lib/types';
+import { acquireGpsFix, shouldTransmitLocationUpdate } from '@/lib/trackingStatus';
 
 interface DashboardData {
   role: string;
@@ -80,6 +81,9 @@ export default function DashboardPage() {
   const [delayReason, setDelayReason] = useState('');
   const watchIdRef = useRef<number | null>(null);
   const lastPosRef = useRef<{ lat: number; lng: number; acc?: number; hdg?: number | null; spd?: number | null } | null>(null);
+  const inFlightRef = useRef<boolean>(false);
+  const lastSentCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
+  const lastSentTimeRef = useRef<number>(0);
 
   // Authority feedback state
   const [authFeedback, setAuthFeedback] = useState('');
@@ -125,27 +129,43 @@ export default function DashboardPage() {
             spd: pos.coords.speed,
           };
         },
-        () => {},
+        () => { },
         { enableHighAccuracy: true }
       );
     }
 
     const timer = setInterval(async () => {
+      if (inFlightRef.current) return;
       const p = lastPosRef.current;
       if (!p) return;
+
+      const decision = shouldTransmitLocationUpdate({
+        lastSentCoords: lastSentCoordsRef.current,
+        lastSentTimeMs: lastSentTimeRef.current,
+        newCoords: { lat: p.lat, lng: p.lng, speed: p.spd },
+      });
+
+      if (!decision.shouldSend) return;
+
+      inFlightRef.current = true;
       try {
         await apiFetch('/api/locations/location/update/', {
           method: 'POST',
           body: JSON.stringify({
             latitude: Number(p.lat.toFixed(7)),
             longitude: Number(p.lng.toFixed(7)),
-            accuracy: p.acc ?? null,
+            accuracy: p.acc != null ? Math.round(p.acc) : null,
             heading: p.hdg ?? null,
             speed: p.spd ?? null,
+            timestamp: new Date().toISOString(),
           }),
         });
+        lastSentCoordsRef.current = { lat: p.lat, lng: p.lng };
+        lastSentTimeRef.current = Date.now();
       } catch {
         // ignore transient errors
+      } finally {
+        inFlightRef.current = false;
       }
     }, 5000);
 
@@ -158,32 +178,28 @@ export default function DashboardPage() {
     };
   }, [user?.role, locStatus?.has_active_journey]);
 
-  const getCurrentCoords = (): Promise<{ latitude: number; longitude: number } | null> =>
-    new Promise((resolve) => {
-      if (typeof navigator === 'undefined' || !navigator.geolocation) {
-        resolve(null);
-        return;
-      }
-      navigator.geolocation.getCurrentPosition(
-        (pos) =>
-          resolve({
-            latitude: Number(pos.coords.latitude.toFixed(7)),
-            longitude: Number(pos.coords.longitude.toFixed(7)),
-          }),
-        () => resolve(null),
-        { enableHighAccuracy: true, timeout: 6000 }
-      );
-    });
-
   const handleStartJourney = async () => {
     setDriverErr('');
     setDriverMsg('');
     setJourneyBusy(true);
     try {
-      const coords = await getCurrentCoords();
+      const fix = await acquireGpsFix();
+      if (!fix.success || !fix.coords) {
+        setDriverErr(fix.errorMessage || 'Cannot start journey without a verified GPS fix.');
+        return;
+      }
+      lastSentCoordsRef.current = { lat: fix.coords.lat, lng: fix.coords.lng };
+      lastSentTimeRef.current = Date.now();
+
       await apiFetch('/api/locations/journey/start/', {
         method: 'POST',
-        body: JSON.stringify(coords || { latitude: 23.8103, longitude: 90.4125 }),
+        body: JSON.stringify({
+          latitude: fix.coords.lat,
+          longitude: fix.coords.lng,
+          accuracy: fix.coords.accuracy,
+          speed: fix.coords.speed,
+          heading: fix.coords.heading,
+        }),
       });
       setDriverMsg('Journey started! Live GPS sharing is now active.');
       await loadDashboard();
@@ -199,15 +215,36 @@ export default function DashboardPage() {
     setDriverMsg('');
     setJourneyBusy(true);
     try {
-      const coords = await getCurrentCoords();
+      const p = lastPosRef.current;
+      const payload = p ? { latitude: Number(p.lat.toFixed(7)), longitude: Number(p.lng.toFixed(7)) } : {};
       const res = await apiFetch<{ duration_minutes: number | null }>('/api/locations/journey/end/', {
         method: 'POST',
-        body: JSON.stringify(coords || {}),
+        body: JSON.stringify(payload),
       });
       setDriverMsg(`Journey completed (${res.duration_minutes ?? 0} mins). GPS sharing stopped.`);
       await loadDashboard();
     } catch (err) {
       setDriverErr(err instanceof ApiError ? err.message : 'Failed to end journey.');
+    } finally {
+      setJourneyBusy(false);
+    }
+  };
+
+  const handleAbortJourney = async () => {
+    const reason = window.prompt('Please enter reason for aborting journey (e.g. breakdown, emergency):');
+    if (reason === null) return;
+    setDriverErr('');
+    setDriverMsg('');
+    setJourneyBusy(true);
+    try {
+      const res = await apiFetch<{ duration_minutes: number | null }>('/api/locations/journey/abort/', {
+        method: 'POST',
+        body: JSON.stringify({ reason: reason || 'Aborted by driver' }),
+      });
+      setDriverMsg(`Journey aborted (${res.duration_minutes ?? 0} mins). GPS sharing stopped.`);
+      await loadDashboard();
+    } catch (err) {
+      setDriverErr(err instanceof ApiError ? err.message : 'Failed to abort journey.');
     } finally {
       setJourneyBusy(false);
     }
@@ -366,9 +403,8 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between p-3 rounded-lg bg-slate-100">
                   <span className="text-sm font-medium text-slate-700">Journey Status</span>
                   <span
-                    className={`px-3 py-1 rounded-full text-xs font-bold ${
-                      activeJourney ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
-                    }`}
+                    className={`px-3 py-1 rounded-full text-xs font-bold ${activeJourney ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
+                      }`}
                   >
                     {activeJourney ? 'LIVE & SHARING GPS' : 'NOT STARTED'}
                   </span>
@@ -385,15 +421,27 @@ export default function DashboardPage() {
                     {journeyBusy ? 'Starting...' : 'START JOURNEY'}
                   </button>
                 ) : (
-                  <button
-                    type="button"
-                    disabled={journeyBusy}
-                    onClick={handleEndJourney}
-                    className="w-full py-3 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-bold rounded-xl flex items-center justify-center gap-2"
-                  >
-                    <Square className="w-5 h-5" />
-                    {journeyBusy ? 'Ending...' : 'END JOURNEY'}
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={journeyBusy}
+                      onClick={handleEndJourney}
+                      className="flex-1 py-3 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-bold rounded-xl flex items-center justify-center gap-2"
+                    >
+                      <Square className="w-5 h-5" />
+                      {journeyBusy ? 'Ending...' : 'END JOURNEY'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={journeyBusy}
+                      onClick={handleAbortJourney}
+                      className="px-4 py-3 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white font-bold rounded-xl flex items-center justify-center gap-2"
+                      title="Abort journey due to breakdown or emergency"
+                    >
+                      <AlertTriangle className="w-5 h-5" />
+                      ABORT
+                    </button>
+                  </div>
                 )}
               </>
             ) : (

@@ -3,10 +3,22 @@ from .models import Bus, BusLocation, BusAssignment, ETACalculation
 
 
 class BusLocationSerializer(serializers.ModelSerializer):
+    accuracy = serializers.SerializerMethodField()
+
     class Meta:
         model = BusLocation
-        fields = ['id', 'bus', 'latitude', 'longitude', 'speed', 'heading', 'timestamp']
+        fields = ['id', 'bus', 'latitude', 'longitude', 'speed', 'heading', 'accuracy', 'is_accurate', 'timestamp']
         read_only_fields = ['id', 'timestamp']
+
+    def get_accuracy(self, obj):
+        try:
+            from locations.models import DriverLocation
+            driver_loc = DriverLocation.objects.filter(journey__bus=obj.bus).first()
+            if driver_loc and driver_loc.accuracy is not None:
+                return round(driver_loc.accuracy, 1)
+        except Exception:
+            pass
+        return None
 
 
 class BusAssignmentSerializer(serializers.ModelSerializer):
@@ -32,6 +44,8 @@ class BusSerializer(serializers.ModelSerializer):
     route_name = serializers.CharField(source='current_route.name', read_only=True)
     bus_type_display = serializers.CharField(source='get_bus_type_display', read_only=True)
     active_assignment = serializers.SerializerMethodField()
+    active_journey = serializers.SerializerMethodField()
+    latest_journey = serializers.SerializerMethodField()
 
     class Meta:
         model = Bus
@@ -39,6 +53,7 @@ class BusSerializer(serializers.ModelSerializer):
             'id', 'bus_number', 'license_plate', 'bus_type', 'bus_type_display',
             'capacity', 'model', 'year', 'is_active', 'current_route',
             'route_name', 'current_trip', 'latest_location', 'active_assignment',
+            'active_journey', 'latest_journey',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -48,6 +63,29 @@ class BusSerializer(serializers.ModelSerializer):
         if not assignment:
             return None
         return BusAssignmentSerializer(assignment).data
+
+    def get_active_journey(self, obj):
+        journey = obj.journeys.filter(status='active').select_related('driver').first()
+        if not journey:
+            return None
+        return {
+            'id': journey.id,
+            'driver_id': journey.driver_id,
+            'driver_name': journey.driver.get_full_name() or journey.driver.username,
+            'status': journey.status,
+            'start_time': journey.start_time.isoformat() if journey.start_time else None,
+        }
+
+    def get_latest_journey(self, obj):
+        journey = obj.journeys.order_by('-start_time').first()
+        if not journey:
+            return None
+        return {
+            'id': journey.id,
+            'status': journey.status,
+            'start_time': journey.start_time.isoformat() if journey.start_time else None,
+            'end_time': journey.end_time.isoformat() if journey.end_time else None,
+        }
 
 
 class BusLocationUpdateSerializer(serializers.Serializer):
@@ -79,3 +117,7 @@ class BusMapDataSerializer(serializers.Serializer):
     next_stop = serializers.CharField(allow_null=True)
     eta = serializers.CharField()
     speed = serializers.DecimalField(max_digits=5, decimal_places=2, allow_null=True)
+    heading = serializers.DecimalField(max_digits=5, decimal_places=2, allow_null=True, required=False)
+    accuracy = serializers.FloatField(allow_null=True, required=False)
+    is_accurate = serializers.BooleanField(required=False)
+    timestamp = serializers.DateTimeField(required=False)

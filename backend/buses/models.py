@@ -199,6 +199,14 @@ class Journey(models.Model):
     driver = models.ForeignKey(User, on_delete=models.CASCADE, related_name='journeys')
     bus = models.ForeignKey(Bus, on_delete=models.CASCADE, related_name='journeys')
     route = models.ForeignKey('schedules.Route', on_delete=models.CASCADE, related_name='journeys')
+    route_revision = models.ForeignKey(
+        'schedules.RouteRevision',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='journeys',
+        help_text='The specific route revision active when this journey was run'
+    )
     assignment = models.ForeignKey(BusAssignment, on_delete=models.SET_NULL, null=True, blank=True, related_name='journeys')
     status = models.CharField(max_length=20, choices=JOURNEY_STATUS_CHOICES, default='active')
     start_time = models.DateTimeField(default=timezone.now)
@@ -213,16 +221,57 @@ class Journey(models.Model):
     class Meta:
         db_table = 'journeys'
         ordering = ['-start_time']
+        indexes = [
+            models.Index(fields=['status', '-start_time']),
+            models.Index(fields=['driver', 'status']),
+            models.Index(fields=['bus', 'status']),
+            models.Index(fields=['route', 'status']),
+            models.Index(fields=['start_time']),
+        ]
 
     def __str__(self):
-        return f"{self.driver.get_full_name()} - {self.bus.bus_number} - {self.status}"
+        driver_name = (self.driver.get_full_name() or self.driver.username) if self.driver else "Unknown Driver"
+        bus_number = self.bus.bus_number if self.bus else "Unknown Bus"
+        return f"{driver_name} - {bus_number} - {self.status}"
 
     @property
     def duration_minutes(self):
-        if self.end_time:
-            delta = self.end_time - self.start_time
-            return int(delta.total_seconds() / 60)
-        return None
+        if not self.start_time or not self.end_time:
+            return None
+        delta = self.end_time - self.start_time
+        total_secs = delta.total_seconds()
+        if total_secs < 0:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Journey #%s has invalid negative duration (start=%s, end=%s)",
+                self.id, self.start_time, self.end_time
+            )
+            return None
+        return int(total_secs / 60)
+
+    def clean(self):
+        super().clean()
+        from django.core.exceptions import ValidationError
+        if self.start_time and self.end_time and self.end_time < self.start_time:
+            raise ValidationError({'end_time': 'End time cannot be earlier than start time.'})
+        if self.route_revision_id:
+            if self.route_id and self.route_revision.route_id != self.route_id:
+                raise ValidationError({'route_revision': 'Route revision must belong to the same route as the journey.'})
+            if not self.pk and self.route_revision.status != 'published':
+                raise ValidationError({'route_revision': 'New journeys can only be bound to an active published route revision.'})
+            elif self.pk and self.route_revision.status == 'draft':
+                raise ValidationError({'route_revision': 'A draft route revision cannot be bound to a journey. Only published revisions are permitted.'})
+
+    def save(self, *args, **kwargs):
+        from django.core.exceptions import ValidationError
+        if self.route_revision_id:
+            if self.route_id and self.route_revision.route_id != self.route_id:
+                raise ValidationError({'route_revision': 'Route revision must belong to the same route as the journey.'})
+            if not self.pk and self.route_revision.status != 'published':
+                raise ValidationError({'route_revision': 'New journeys can only be bound to an active published route revision.'})
+            elif self.pk and self.route_revision.status == 'draft':
+                raise ValidationError({'route_revision': 'A draft route revision cannot be bound to a journey. Only published revisions are permitted.'})
+        super().save(*args, **kwargs)
 
     @classmethod
     def get_active_journey(cls, driver):

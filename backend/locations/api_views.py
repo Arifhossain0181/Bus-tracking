@@ -1,12 +1,18 @@
+import datetime
+from decimal import Decimal
+from django.db import transaction
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
+from core.throttling import TelemetryRateThrottle
 from .models import DriverLocation, LocationHistory
 from .serializers import DriverLocationSerializer, LocationUpdateSerializer
-from buses.models import Journey, BusAssignment
+from .services import record_driver_gps, _to_decimal
+from buses.models import Journey, BusAssignment, BusLocation
 from notifications.models import Notification
+from reports.services import sync_journey_to_trip_log
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -18,115 +24,334 @@ def start_journey(request):
             status=status.HTTP_403_FORBIDDEN
         )
     
-    # Check for existing active journey
-    active_journey = Journey.get_active_journey(request.user)
-    if active_journey:
-        return Response({
-            'error': 'You already have an active journey',
-            'journey_id': active_journey.id
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Get active assignment
-    try:
-        assignment = BusAssignment.objects.get(driver=request.user, is_active=True)
-    except BusAssignment.DoesNotExist:
-        return Response({
-            'error': 'No active bus assignment found'
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Get initial location from request
-    latitude = request.data.get('latitude')
-    longitude = request.data.get('longitude')
-    
-    # Create journey
-    journey = Journey.objects.create(
-        driver=request.user,
-        bus=assignment.bus,
-        route=assignment.route,
-        assignment=assignment,
-        status='active',
-        start_latitude=latitude,
-        start_longitude=longitude
-    )
-    
-    # Create/update driver location with journey reference
-    location, created = DriverLocation.objects.update_or_create(
-        driver=request.user,
-        defaults={
-            'latitude': latitude or 0,
-            'longitude': longitude or 0,
+    with transaction.atomic():
+        # Check for existing active journey for this driver (locked)
+        active_journey = Journey.objects.select_for_update().filter(driver=request.user, status='active').first()
+        if active_journey:
+            return Response({
+                'error': 'You already have an active journey',
+                'journey_id': active_journey.id
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get active assignment
+        try:
+            assignment = BusAssignment.objects.select_related('bus', 'route').get(driver=request.user, is_active=True)
+        except BusAssignment.DoesNotExist:
+            return Response({
+                'error': 'No active bus assignment found'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if the bus already has an active journey (e.g. from another session)
+        bus_active = Journey.objects.select_for_update().filter(bus=assignment.bus, status='active').first()
+        if bus_active:
+            return Response({
+                'error': f'Bus {assignment.bus.bus_number} already has an active journey (ID #{bus_active.id})',
+                'journey_id': bus_active.id
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validate coordinates if provided
+        latitude = request.data.get('latitude')
+        longitude = request.data.get('longitude')
+        accuracy = request.data.get('accuracy')
+        speed = request.data.get('speed')
+        heading = request.data.get('heading')
+        notes = request.data.get('notes', '')
+
+        dec_lat = None
+        dec_lon = None
+        has_coords = (latitude is not None or longitude is not None)
+
+        if has_coords:
+            if latitude is None or longitude is None:
+                return Response(
+                    {'error': 'Both latitude and longitude must be provided.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            dec_lat = _to_decimal(latitude, max_digits=10, decimal_places=7)
+            dec_lon = _to_decimal(longitude, max_digits=10, decimal_places=7)
+            if dec_lat is None or dec_lon is None:
+                return Response(
+                    {'error': 'Valid numeric latitude and longitude are required.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if dec_lat < Decimal('-90.0') or dec_lat > Decimal('90.0'):
+                return Response(
+                    {'error': 'Latitude must be between -90 and 90 degrees.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if dec_lon < Decimal('-180.0') or dec_lon > Decimal('180.0'):
+                return Response(
+                    {'error': 'Longitude must be between -180 and 180 degrees.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if dec_lat == Decimal('0') and dec_lon == Decimal('0'):
+                return Response(
+                    {'error': 'Invalid coordinates: Null Island (0, 0) is rejected.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Validate optional metrics
+        acc_val = None
+        if accuracy is not None:
+            try:
+                acc_val = float(accuracy)
+                if acc_val < 0 or acc_val > 5000:
+                    return Response(
+                        {'error': 'Accuracy must be between 0 and 5000 meters.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Invalid accuracy value.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        spd_val = None
+        dec_speed = None
+        if speed is not None:
+            try:
+                spd_val = float(speed)
+                if spd_val < 0 or spd_val > 150:
+                    return Response(
+                        {'error': 'Speed must be between 0 and 150 m/s.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                dec_speed = _to_decimal(speed, max_digits=5, decimal_places=2)
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Invalid speed value.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        hdg_val = None
+        dec_heading = None
+        if heading is not None:
+            try:
+                hdg_val = float(heading)
+                if hdg_val < 0 or hdg_val > 360:
+                    return Response(
+                        {'error': 'Heading must be between 0 and 360 degrees.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                dec_heading = _to_decimal(heading, max_digits=5, decimal_places=2)
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Invalid heading value.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Create journey
+        active_rev = None
+        if assignment.route and hasattr(assignment.route, 'active_revision') and assignment.route.active_revision:
+            if assignment.route.active_revision.status == 'published':
+                active_rev = assignment.route.active_revision
+        journey = Journey.objects.create(
+            driver=request.user,
+            bus=assignment.bus,
+            route=assignment.route,
+            route_revision=active_rev,
+            assignment=assignment,
+            status='active',
+            start_time=timezone.now(),
+            start_latitude=dec_lat,
+            start_longitude=dec_lon,
+            notes=notes
+        )
+        
+        # Create/update driver location with journey reference
+        defaults = {
             'is_sharing': True,
             'session_started': timezone.now(),
-            'journey': journey
+            'journey': journey,
         }
-    )
-    
-    # Create notification for journey start
-    Notification.create_journey_notification(journey, 'journey_start', request.user)
-    
-    return Response({
-        'status': 'success',
-        'message': 'Journey started',
-        'journey_id': journey.id,
-        'bus_number': assignment.bus.bus_number,
-        'route_name': assignment.route.name
-    })
+        if dec_lat is not None and dec_lon is not None:
+            defaults['latitude'] = dec_lat
+            defaults['longitude'] = dec_lon
+            defaults['accuracy'] = acc_val
+            defaults['speed'] = spd_val
+            defaults['heading'] = hdg_val
+        else:
+            existing_loc = DriverLocation.objects.filter(driver=request.user).first()
+            if not existing_loc:
+                defaults['latitude'] = Decimal('0')
+                defaults['longitude'] = Decimal('0')
+
+        location, created = DriverLocation.objects.update_or_create(
+            driver=request.user,
+            defaults=defaults
+        )
+
+        # If coordinates provided, record to history and sync initial BusLocation
+        if dec_lat is not None and dec_lon is not None:
+            LocationHistory.objects.create(
+                driver=request.user,
+                latitude=dec_lat,
+                longitude=dec_lon,
+            )
+            is_accurate = True if acc_val is None else (acc_val <= 50.0)
+            BusLocation.objects.create(
+                bus=assignment.bus,
+                latitude=dec_lat,
+                longitude=dec_lon,
+                speed=dec_speed,
+                heading=dec_heading,
+                is_accurate=is_accurate,
+                timestamp=timezone.now(),
+            )
+            if assignment.route and assignment.bus.current_route_id != assignment.route_id:
+                assignment.bus.current_route = assignment.route
+                assignment.bus.save(update_fields=['current_route'])
+        
+        # Create notification for journey start
+        Notification.create_journey_notification(journey, 'journey_start', request.user)
+        
+        return Response({
+            'status': 'success',
+            'message': 'Journey started',
+            'journey_id': journey.id,
+            'bus_number': assignment.bus.bus_number,
+            'route_name': assignment.route.name
+        })
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def end_journey(request):
-    """End the current journey - stops location sharing."""
-    if request.user.role != 'driver':
-        return Response(
-            {'error': 'Only drivers can end journeys'}, 
-            status=status.HTTP_403_FORBIDDEN
+    """End the current journey - stops location sharing and creates immutable trip history."""
+    journey_id = request.data.get('journey_id')
+
+    with transaction.atomic():
+        if request.user.role in ['admin', 'authority'] and journey_id:
+            journey = Journey.objects.select_for_update().filter(id=journey_id).first()
+        else:
+            if request.user.role != 'driver':
+                return Response(
+                    {'error': 'Only drivers or administrators can end journeys'}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            journey = Journey.objects.select_for_update().filter(driver=request.user, status='active').first()
+        
+        if not journey:
+            return Response({
+                'error': 'No active journey found to end'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if journey.status != 'active':
+            return Response({
+                'error': f'Cannot end journey in "{journey.status}" status. Only active journeys can be ended.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get final location from request
+        latitude = request.data.get('latitude')
+        longitude = request.data.get('longitude')
+        notes = request.data.get('notes')
+        
+        end_time = timezone.now()
+        if journey.start_time and end_time < journey.start_time:
+            return Response({
+                'error': f'Invalid timestamps: end time ({end_time.isoformat()}) cannot be earlier than start time ({journey.start_time.isoformat()}).'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Update journey
+        journey.status = 'completed'
+        journey.end_time = end_time
+        if latitude is not None:
+            journey.end_latitude = latitude
+        if longitude is not None:
+            journey.end_longitude = longitude
+        if notes:
+            journey.notes = f"{journey.notes}\n{notes}".strip() if journey.notes else notes
+        journey.save()
+        
+        # Stop location sharing
+        DriverLocation.objects.filter(driver=journey.driver).update(
+            is_sharing=False,
+            journey=None
         )
-    
-    # Get active journey
-    journey = Journey.get_active_journey(request.user)
-    if not journey:
+        
+        # Synchronize to TripLog
+        sync_journey_to_trip_log(journey)
+        
+        # Create notification for journey end
+        Notification.create_journey_notification(journey, 'journey_end', request.user)
+        
+        duration = journey.duration_minutes
+        
         return Response({
-            'error': 'No active journey found'
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Get final location from request
-    latitude = request.data.get('latitude')
-    longitude = request.data.get('longitude')
-    
-    # Update journey
-    journey.status = 'completed'
-    journey.end_time = timezone.now()
-    journey.end_latitude = latitude
-    journey.end_longitude = longitude
-    journey.save()
-    
-    # Stop location sharing
-    try:
-        location = DriverLocation.objects.get(driver=request.user)
-        location.is_sharing = False
-        location.journey = None
-        location.save()
-    except DriverLocation.DoesNotExist:
-        pass
-    
-    # Create notification for journey end
-    Notification.create_journey_notification(journey, 'journey_end', request.user)
-    
-    duration = journey.duration_minutes
-    
-    return Response({
-        'status': 'success',
-        'message': 'Journey ended',
-        'journey_id': journey.id,
-        'duration_minutes': duration
-    })
+            'status': 'success',
+            'message': 'Journey ended',
+            'journey_id': journey.id,
+            'duration_minutes': duration
+        })
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+def abort_journey(request):
+    """Abort an active journey due to breakdown, cancellation, or emergency."""
+    journey_id = request.data.get('journey_id')
+    reason = request.data.get('reason') or request.data.get('notes') or 'Aborted by operator'
+
+    with transaction.atomic():
+        if request.user.role in ['admin', 'authority'] and journey_id:
+            journey = Journey.objects.select_for_update().filter(id=journey_id).first()
+        else:
+            if request.user.role != 'driver':
+                return Response(
+                    {'error': 'Only drivers or administrators can abort journeys'}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            journey = Journey.objects.select_for_update().filter(driver=request.user, status='active').first()
+        
+        if not journey:
+            return Response({
+                'error': 'No active journey found to abort'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if journey.status != 'active':
+            return Response({
+                'error': f'Cannot abort journey in "{journey.status}" status. Only active journeys can be aborted.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        end_time = timezone.now()
+        if journey.start_time and end_time < journey.start_time:
+            return Response({
+                'error': f'Invalid timestamps: end time ({end_time.isoformat()}) cannot be earlier than start time ({journey.start_time.isoformat()}).'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        journey.status = 'aborted'
+        journey.end_time = end_time
+        abort_note = f"[Aborted by {request.user.role}:{request.user.username}] Reason: {reason}"
+        journey.notes = f"{journey.notes}\n{abort_note}".strip() if journey.notes else abort_note
+        journey.save()
+        
+        # Stop location sharing
+        DriverLocation.objects.filter(driver=journey.driver).update(
+            is_sharing=False,
+            journey=None
+        )
+        
+        # Synchronize to TripLog (is_completed=False)
+        sync_journey_to_trip_log(journey)
+        
+        # Create notification for journey abort
+        Notification.create_journey_notification(journey, 'journey_end', request.user, reason=reason)
+        
+        duration = journey.duration_minutes
+        
+        return Response({
+            'status': 'aborted',
+            'message': f'Journey #{journey.id} aborted: {reason}',
+            'journey_id': journey.id,
+            'duration_minutes': duration
+        })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@throttle_classes([TelemetryRateThrottle])
 def update_location(request):
-    """Update driver's live location during active journey."""
+    """Update driver's live location during active journey and sync to bus."""
     if request.user.role != 'driver':
         return Response(
             {'error': 'Only drivers can share location'}, 
@@ -146,32 +371,19 @@ def update_location(request):
     
     data = serializer.validated_data
     
-    # Update or create driver location
-    location, created = DriverLocation.objects.update_or_create(
-        driver=request.user,
-        defaults={
-            'latitude': data['latitude'],
-            'longitude': data['longitude'],
-            'accuracy': data.get('accuracy'),
-            'heading': data.get('heading'),
-            'speed': data.get('speed'),
-            'is_sharing': True,
-            'journey': journey
-        }
-    )
-    
-    # Store in history for analytics
-    LocationHistory.objects.create(
-        driver=request.user,
-        latitude=data['latitude'],
-        longitude=data['longitude']
-    )
-    
-    return Response({
-        'status': 'success',
-        'message': 'Location updated',
-        'timestamp': location.last_updated.isoformat()
-    })
+    try:
+        result = record_driver_gps(
+            driver=request.user,
+            latitude=data['latitude'],
+            longitude=data['longitude'],
+            accuracy=data.get('accuracy'),
+            heading=data.get('heading'),
+            speed=data.get('speed'),
+            timestamp=data.get('timestamp'),
+        )
+        return Response(result)
+    except ValueError as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['POST'])
@@ -208,14 +420,18 @@ def get_active_locations(request):
             'longitude': float(loc.longitude),
             'heading': loc.heading,
             'speed': loc.speed,
+            'accuracy': loc.accuracy,
             'last_updated': loc.last_updated.isoformat(),
             'is_active': loc.is_active,
         }
         
         if loc.journey:
-            data['bus_number'] = loc.journey.bus.bus_number
-            data['route_name'] = loc.journey.route.name
-            data['route_id'] = loc.journey.route.id
+            if loc.journey.bus:
+                data['bus_id'] = loc.journey.bus.id
+                data['bus_number'] = loc.journey.bus.bus_number
+            if loc.journey.route:
+                data['route_name'] = loc.journey.route.name
+                data['route_id'] = loc.journey.route.id
             data['journey_id'] = loc.journey.id
             data['journey_start'] = loc.journey.start_time.isoformat()
         
@@ -312,22 +528,13 @@ def get_journey_path(request, journey_id):
             'error': 'Journey not found'
         }, status=status.HTTP_404_NOT_FOUND)
     
-    # Get location history for this journey's time range
-    locations = LocationHistory.objects.filter(
+    # Get location history across active and archived tiers for this journey's time range
+    from .archival_service import get_combined_location_history
+    path = get_combined_location_history(
         driver=journey.driver,
-        timestamp__gte=journey.start_time
+        start_time=journey.start_time,
+        end_time=journey.end_time
     )
-    
-    if journey.end_time:
-        locations = locations.filter(timestamp__lte=journey.end_time)
-    
-    locations = locations.order_by('timestamp')
-    
-    path = [{
-        'lat': float(loc.latitude),
-        'lng': float(loc.longitude),
-        'timestamp': loc.timestamp.isoformat()
-    } for loc in locations]
     
     return Response({
         'journey_id': journey.id,
@@ -359,11 +566,21 @@ def get_journey_history(request):
 
     date_from = request.GET.get('date_from')
     if date_from:
-        journeys = journeys.filter(start_time__date__gte=date_from)
+        try:
+            d_from = datetime.datetime.strptime(date_from, '%Y-%m-%d').date()
+            dt_from = timezone.make_aware(datetime.datetime.combine(d_from, datetime.time.min))
+            journeys = journeys.filter(start_time__gte=dt_from)
+        except (ValueError, TypeError):
+            pass
 
     date_to = request.GET.get('date_to')
     if date_to:
-        journeys = journeys.filter(start_time__date__lte=date_to)
+        try:
+            d_to = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
+            dt_next = timezone.make_aware(datetime.datetime.combine(d_to + datetime.timedelta(days=1), datetime.time.min))
+            journeys = journeys.filter(start_time__lt=dt_next)
+        except (ValueError, TypeError):
+            pass
 
     result = [
         {

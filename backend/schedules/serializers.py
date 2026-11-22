@@ -1,5 +1,31 @@
 from rest_framework import serializers
-from .models import Route, Stop, Schedule, StopSchedule, Trip, TripStopTime
+from .models import Route, RouteRevision, Stop, Schedule, StopSchedule, Trip, TripStopTime
+
+
+class RouteRevisionSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RouteRevision
+        fields = [
+            'id', 'route', 'revision_number', 'status', 'geometry',
+            'distance_km', 'duration_mins', 'metadata', 'change_summary',
+            'created_by', 'created_by_name', 'created_at', 'published_at'
+        ]
+        read_only_fields = ['id', 'route', 'revision_number', 'created_by', 'created_at', 'published_at']
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
+        return None
+
+    def validate_geometry(self, value):
+        if value is not None:
+            from .geometry import validate_geojson_linestring
+            is_valid, err = validate_geojson_linestring(value)
+            if not is_valid:
+                raise serializers.ValidationError(err)
+        return value
 
 
 class StopSerializer(serializers.ModelSerializer):
@@ -57,6 +83,9 @@ class ScheduleSerializer(serializers.ModelSerializer):
 class RouteSerializer(serializers.ModelSerializer):
     stops = StopSerializer(many=True, read_only=True)
     trips = TripSerializer(many=True, read_only=True)
+    active_revision = RouteRevisionSerializer(read_only=True)
+    active_geometry = serializers.SerializerMethodField()
+    revisions_count = serializers.SerializerMethodField()
     stops_count = serializers.SerializerMethodField()
     trips_count = serializers.SerializerMethodField()
     route_type_display = serializers.CharField(source='get_route_type_display', read_only=True)
@@ -70,10 +99,19 @@ class RouteSerializer(serializers.ModelSerializer):
             'color', 'is_active', 'is_published', 'total_distance_km',
             'estimated_duration_mins', 'service_days', 'service_days_display',
             'custom_days', 'origin_name', 'destination_name',
+            'active_revision', 'active_geometry', 'revisions_count',
             'stops', 'trips', 'stops_count', 'trips_count', 'active_assignments',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_active_geometry(self, obj):
+        if obj.active_revision:
+            return obj.active_revision.geometry
+        return None
+
+    def get_revisions_count(self, obj):
+        return obj.revisions.count()
 
     def get_stops_count(self, obj):
         return obj.stops.count()

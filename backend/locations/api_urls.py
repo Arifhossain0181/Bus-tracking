@@ -6,6 +6,7 @@ urlpatterns = [
     path('journeys/', api_views.get_journey_history, name='api_journey_history'),
     path('journey/start/', api_views.start_journey, name='api_start_journey'),
     path('journey/end/', api_views.end_journey, name='api_end_journey'),
+    path('journey/abort/', api_views.abort_journey, name='api_abort_journey'),
     path('journey/delay/', api_views.report_delay, name='api_report_delay'),
     path('journey/<int:journey_id>/path/', api_views.get_journey_path, name='api_journey_path'),
     
