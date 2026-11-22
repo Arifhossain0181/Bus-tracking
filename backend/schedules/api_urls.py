@@ -7,6 +7,7 @@ urlpatterns = [
     path('routes/<int:pk>/publish/', api_views.publish_route_api, name='api_route_publish'),
     path('routes/<int:pk>/unpublish/', api_views.unpublish_route_api, name='api_route_unpublish'),
     path('routes/<int:pk>/revisions/', api_views.route_revisions_api, name='api_route_revisions'),
+    path('routes/generate-geometry/', api_views.route_generate_geometry_api, name='api_route_generate_geometry_preview'),
     path('routes/<int:pk>/generate-geometry/', api_views.route_generate_geometry_api, name='api_route_generate_geometry'),
     path('routes/<int:pk>/revisions/<int:rev_pk>/', api_views.route_revision_detail_api, name='api_route_revision_detail'),
     path('routes/<int:pk>/revisions/<int:rev_pk>/publish/', api_views.route_revision_publish_api, name='api_route_revision_publish'),

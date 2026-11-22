@@ -8,6 +8,8 @@ from .contracts import (
 from .providers import (
     RoutingProvider,
     ValhallaRoutingProvider,
+    OSRMRoutingProvider,
+    FallbackRoutingProvider,
     get_routing_provider,
 )
 from .service import generate_route_geometry
@@ -20,6 +22,8 @@ __all__ = [
     'RoutingProviderError',
     'RoutingProvider',
     'ValhallaRoutingProvider',
+    'OSRMRoutingProvider',
+    'FallbackRoutingProvider',
     'get_routing_provider',
     'generate_route_geometry',
 ]

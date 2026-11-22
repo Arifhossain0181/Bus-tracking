@@ -171,7 +171,10 @@ if os.getenv('CLOUDINARY_URL'):
         'API_SECRET': os.getenv('CLOUDINARY_API_SECRET'),
     }
 
-# Routing engine configuration (Task 017)
+# Routing engine configuration (Task 017 & Road Routing Fallback)
 VALHALLA_URL = os.getenv('VALHALLA_URL', 'http://localhost:8002')
 VALHALLA_TIMEOUT = float(os.getenv('VALHALLA_TIMEOUT', '10.0'))
+OSRM_URL = os.getenv('OSRM_URL', 'https://router.project-osrm.org')
+OSRM_TIMEOUT = float(os.getenv('OSRM_TIMEOUT', '10.0'))
 ROUTING_PROVIDER = os.getenv('ROUTING_PROVIDER', 'valhalla')
+ROUTING_FALLBACK_OSRM = os.getenv('ROUTING_FALLBACK_OSRM', 'True').lower() in ('true', '1')

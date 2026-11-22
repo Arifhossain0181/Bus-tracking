@@ -23,7 +23,7 @@ from .serializers import (
 )
 
 
-def _save_route_builder(route, data):
+def _save_route_builder(route, data, user=None):
     """Persist Shuttle/Metro trips or Long Road pickup stops for a Route."""
     route_type = data.get('route_type', route.route_type)
     route.name = (data.get('name') or route.name).strip()
@@ -128,6 +128,23 @@ def _save_route_builder(route, data):
             final_ids.append(stop.id)
         route.stops.exclude(id__in=final_ids).delete()
 
+    # Handle optional geometry passed from route builder form
+    geometry = data.get('geometry')
+    if geometry and isinstance(geometry, dict):
+        from .geometry import validate_geojson_linestring
+        is_valid, _ = validate_geojson_linestring(geometry)
+        if is_valid:
+            rev = RouteRevision.objects.create(
+                route=route,
+                geometry=geometry,
+                distance_km=data.get('distance_km') or route.total_distance_km,
+                duration_mins=data.get('estimated_duration_mins') or route.estimated_duration_mins,
+                change_summary=data.get('change_summary') or 'Route geometry configured',
+                created_by=user if user and user.is_authenticated else None,
+                metadata=data.get('metadata') if isinstance(data.get('metadata'), dict) else {'mode': 'road_route'},
+            )
+            route.publish_revision(rev, user=user if user and user.is_authenticated else None)
+
     return route
 
 
@@ -178,7 +195,7 @@ def route_list_api(request):
             is_active=True,
             is_published=bool(request.data.get('is_published', True)),
         )
-        _save_route_builder(route, request.data)
+        _save_route_builder(route, request.data, user=request.user)
 
     return Response(RouteSerializer(route).data, status=status.HTTP_201_CREATED)
 
@@ -204,7 +221,7 @@ def route_detail_api(request, pk):
         return Response({'status': 'Route deleted successfully.'})
 
     with transaction.atomic():
-        _save_route_builder(route, request.data)
+        _save_route_builder(route, request.data, user=request.user)
 
     route.refresh_from_db()
     return Response(RouteSerializer(route).data)
@@ -312,9 +329,10 @@ def route_revisions_api(request, pk):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 @throttle_classes([RoutingRateThrottle])
-def route_generate_geometry_api(request, pk):
+def route_generate_geometry_api(request, pk=None):
     """
-    Generate candidate road-following route geometry for preview in Visual Route Builder.
+    Generate candidate road-following route geometry for preview in Visual Route Builder
+    or unified Route Creation Form.
     
     Protected preview-only endpoint.
     Restricted to administrators and transit authorities.
@@ -326,7 +344,7 @@ def route_generate_geometry_api(request, pk):
             status=status.HTTP_403_FORBIDDEN
         )
 
-    route = get_object_or_404(Route, pk=pk)
+    route = get_object_or_404(Route, pk=pk) if pk is not None else None
 
     data = request.data
     raw_waypoints = data.get('waypoints')
@@ -389,13 +407,13 @@ def route_generate_geometry_api(request, pk):
             profile=str(profile),
             avoid_tolls=avoid_tolls,
             u_turn_penalty=penalty_int,
-            route_id=route.id,
+            route_id=route.id if route else None,
             costing_options=costing_options if isinstance(costing_options, dict) else {},
         )
 
         return Response({
-            'route_id': route.id,
-            'route_name': route.name,
+            'route_id': route.id if route else None,
+            'route_name': route.name if route else 'New Route',
             'geometry': result.geometry,
             'distance_km': float(result.distance_km),
             'duration_mins': result.duration_mins,

@@ -410,6 +410,7 @@ class RouteGenerateGeometryApiTests(TestCase):
         resp = self.client.post(url, {"waypoints": "invalid"}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
 
+    @override_settings(ROUTING_FALLBACK_OSRM=False)
     @patch("requests.post")
     def test_provider_failure_returns_clean_error(self, mock_post):
         self.client.force_authenticate(user=self.admin)
@@ -421,6 +422,59 @@ class RouteGenerateGeometryApiTests(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_502_BAD_GATEWAY)
         self.assertEqual(resp.data["provider"], "valhalla")
         self.assertIn("Could not connect", resp.data["error"])
+
+    @patch("requests.get")
+    @patch("requests.post")
+    def test_provider_fallback_to_osrm_on_valhalla_offline(self, mock_post, mock_get):
+        self.client.force_authenticate(user=self.admin)
+
+        mock_post.side_effect = requests.exceptions.ConnectionError("Valhalla offline")
+        mock_get_response = MagicMock()
+        mock_get_response.status_code = 200
+        mock_get_response.json.return_value = {
+            "code": "Ok",
+            "routes": [{
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[90.41, 23.81], [90.415, 23.815], [90.42, 23.82]],
+                },
+                "distance": 3200.0,
+                "duration": 360.0,
+            }],
+            "waypoints": [
+                {"location": [90.41, 23.81], "distance": 2.0},
+                {"location": [90.42, 23.82], "distance": 3.0},
+            ]
+        }
+        mock_get.return_value = mock_get_response
+
+        url = f"/api/schedules/routes/{self.route.id}/generate-geometry/"
+        resp = self.client.post(url, {"waypoints": [[23.81, 90.41], [23.82, 90.42]]}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["provider"], "osrm")
+        self.assertEqual(resp.data["distance_km"], 3.2)
+        self.assertEqual(len(resp.data["geometry"]["coordinates"]), 3)
+
+    @patch("requests.post")
+    def test_generate_geometry_without_route_pk_for_new_routes(self, mock_post):
+        self.client.force_authenticate(user=self.admin)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "trip": {
+                "summary": {"length": 4.0, "time": 480.0},
+                "legs": [{"coordinates": [[90.41, 23.81], [90.42, 23.82]]}],
+                "locations": [{"lat": 23.81, "lon": 90.41}, {"lat": 23.82, "lon": 90.42}],
+            }
+        }
+        mock_post.return_value = mock_response
+
+        url = "/api/schedules/routes/generate-geometry/"
+        resp = self.client.post(url, {"waypoints": [[23.81, 90.41], [23.82, 90.42]]}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIsNone(resp.data["route_id"])
+        self.assertEqual(resp.data["distance_km"], 4.0)
 
     @patch("requests.post")
     def test_preview_endpoint_does_not_mutate_route_or_create_revision(self, mock_post):

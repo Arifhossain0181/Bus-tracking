@@ -1,16 +1,38 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
-import { ArrowDown, ArrowUp, MapPin, Plus, Trash2, X } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  CheckCircle2,
+  Loader2,
+  Map,
+  MapPin,
+  Plus,
+  Sparkles,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
-import type { RouteItem } from '@/lib/types';
+import type { RouteItem, Stop } from '@/lib/types';
+import type { RoadRouteResponse } from '@/lib/routeGeometry';
 
 const StopLocationPickerModal = dynamic(
   () => import('@/components/maps/StopLocationPickerModal'),
   { ssr: false }
 );
+
+const RouteMapView = dynamic(() => import('@/components/maps/RouteMapView'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-80 sm:h-96 rounded-xl bg-slate-100 animate-pulse border border-slate-200 flex items-center justify-center text-xs text-slate-400">
+      Loading map...
+    </div>
+  ),
+});
 
 interface TripDraft {
   id?: number;
@@ -82,6 +104,85 @@ export function RouteBuilderForm({ existing }: { existing?: RouteItem }) {
         }))
       : [{ name: '', scheduled_time: '07:30', latitude: '', longitude: '', is_major_stop: false }]
   );
+
+  const [roadRouteData, setRoadRouteData] = useState<RoadRouteResponse | null>(
+    existing?.active_geometry
+      ? {
+          route_id: existing.id,
+          route_name: existing.name,
+          geometry: existing.active_geometry,
+          distance_km: Number(existing.total_distance_km) || 0,
+          duration_mins: Number(existing.estimated_duration_mins) || 0,
+          coordinate_count: existing.active_geometry.coordinates.length,
+          waypoints_snapped: [],
+          provider: 'valhalla',
+          warnings: [],
+          metadata: {},
+        }
+      : null
+  );
+  const [generatingRoute, setGeneratingRoute] = useState(false);
+  const [routingError, setRoutingError] = useState<string | null>(null);
+
+  const mapStops: Stop[] = useMemo(() => {
+    return stops
+      .filter(
+        (s) =>
+          s.latitude &&
+          s.longitude &&
+          !Number.isNaN(Number(s.latitude)) &&
+          !Number.isNaN(Number(s.longitude))
+      )
+      .map((s, idx) => ({
+        id: s.id || idx + 1,
+        route: existing?.id,
+        name: s.name || `Pickup #${idx + 1}`,
+        latitude: Number(s.latitude),
+        longitude: Number(s.longitude),
+        order: idx + 1,
+        scheduled_time: s.scheduled_time || '',
+        average_wait_time: 2,
+        is_major_stop: s.is_major_stop,
+      }));
+  }, [stops, existing?.id]);
+
+  const handleGenerateRoadRoute = async () => {
+    if (mapStops.length < 2) {
+      setRoutingError('Please add at least 2 pickup points with map locations to generate a road route.');
+      return;
+    }
+
+    setGeneratingRoute(true);
+    setRoutingError(null);
+
+    try {
+      const endpoint = existing?.id
+        ? `/api/schedules/routes/${existing.id}/generate-geometry/`
+        : `/api/schedules/routes/generate-geometry/`;
+
+      const waypoints = mapStops.map((s) => ({
+        lat: Number(s.latitude),
+        lng: Number(s.longitude),
+      }));
+
+      const res = await apiFetch<RoadRouteResponse>(endpoint, {
+        method: 'POST',
+        body: JSON.stringify({
+          waypoints,
+          profile: 'bus',
+        }),
+      });
+
+      setRoadRouteData(res);
+      if (!durationMins && res.duration_mins) {
+        setDurationMins(String(res.duration_mins));
+      }
+    } catch (err) {
+      setRoutingError(err instanceof ApiError ? err.message : 'Failed to generate road route.');
+    } finally {
+      setGeneratingRoute(false);
+    }
+  };
 
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -203,6 +304,19 @@ export function RouteBuilderForm({ existing }: { existing?: RouteItem }) {
         departure_time: t.departure_time,
         arrival_time: t.arrival_time || null,
       }));
+    }
+
+    if (roadRouteData) {
+      payload.geometry = roadRouteData.geometry;
+      payload.total_distance_km = roadRouteData.distance_km;
+      if (!durationMins && roadRouteData.duration_mins) {
+        payload.estimated_duration_mins = roadRouteData.duration_mins;
+      }
+      payload.metadata = {
+        mode: 'road_route',
+        provider: roadRouteData.provider,
+        shaping_points: mapStops.map((s) => ({ lat: Number(s.latitude), lng: Number(s.longitude) })),
+      };
     }
 
     setSaving(true);
@@ -560,6 +674,85 @@ export function RouteBuilderForm({ existing }: { existing?: RouteItem }) {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Step 4: Integrated Route Map & Road Path Preview */}
+      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-bold text-slate-900 flex items-center gap-2">
+              <Map className="w-5 h-5 text-blue-600" />
+              <span>4. Route Map & Road Path Preview</span>
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Live map preview following roads in Dhaka based on your pickup stops
+            </p>
+          </div>
+          {mapStops.length >= 2 && (
+            <button
+              type="button"
+              onClick={handleGenerateRoadRoute}
+              disabled={generatingRoute}
+              className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm transition-colors"
+            >
+              {generatingRoute ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Calculating Road Route...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Generate Road Route</span>
+                </>
+              )}
+            </button>
+          )}
+        </div>
+
+        {/* Status / Feedback Banner */}
+        {roadRouteData ? (
+          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex flex-wrap items-center justify-between gap-3 text-xs text-emerald-900">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>
+                <strong>Road-following route active:</strong> {roadRouteData.distance_km} km &middot; ~{roadRouteData.duration_mins} mins ({roadRouteData.coordinate_count} road curve points via {roadRouteData.provider.toUpperCase()})
+              </span>
+            </div>
+            {roadRouteData.duration_mins && (
+              <button
+                type="button"
+                onClick={() => setDurationMins(String(roadRouteData.duration_mins))}
+                className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 underline"
+              >
+                Apply Duration ({roadRouteData.duration_mins} mins)
+              </button>
+            )}
+          </div>
+        ) : routingError ? (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>{routingError}</span>
+          </div>
+        ) : mapStops.length >= 2 ? (
+          <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-800 flex items-center justify-between">
+            <span>
+              {mapStops.length} stops located on map. Click <strong>&quot;Generate Road Route&quot;</strong> to calculate the road-following bus path along Dhaka streets.
+            </span>
+          </div>
+        ) : (
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500">
+            Add at least 2 pickup points with map locations in Step 3 above to preview the road-following bus route.
+          </div>
+        )}
+
+        {/* Map View */}
+        <RouteMapView
+          stops={mapStops}
+          color={color}
+          activeGeometry={roadRouteData?.geometry || existing?.active_geometry || existing?.active_revision?.geometry}
+          heightClass="h-80 sm:h-96"
+        />
       </div>
 
       <div className="flex items-center gap-3">

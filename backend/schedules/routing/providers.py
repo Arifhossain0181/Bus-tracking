@@ -329,9 +329,198 @@ class ValhallaRoutingProvider(RoutingProvider):
         )
 
 
+class OSRMRoutingProvider(RoutingProvider):
+    """
+    OSRM (Open Source Routing Machine) Provider adapter.
+    Connects to an OSRM HTTP service (e.g., https://router.project-osrm.org or custom OSRM).
+    """
+
+    def __init__(self, base_url: Optional[str] = None, timeout: Optional[float] = None):
+        self.base_url = (
+            base_url
+            or getattr(settings, 'OSRM_URL', None)
+            or os.getenv('OSRM_URL', 'https://router.project-osrm.org')
+        ).rstrip('/')
+        self.timeout = (
+            timeout
+            if timeout is not None
+            else getattr(settings, 'OSRM_TIMEOUT', None)
+            or float(os.getenv('OSRM_TIMEOUT', '10.0'))
+        )
+
+    def route(self, request: RoutingRequest) -> RoutingResult:
+        # Build coordinates string in lng,lat;lng,lat format for OSRM
+        coords_str = ';'.join(f"{wp[1]:.6f},{wp[0]:.6f}" for wp in request.waypoints)
+        endpoint = f"{self.base_url}/route/v1/driving/{coords_str}?overview=full&geometries=geojson"
+
+        try:
+            response = requests.get(
+                endpoint,
+                timeout=self.timeout,
+                headers={"User-Agent": "UBus-Transit-Platform/1.0"}
+            )
+        except requests.exceptions.Timeout:
+            logger.warning("OSRM routing engine timed out after %ss for %d waypoints", self.timeout, len(request.waypoints))
+            raise RoutingProviderError(
+                f"OSRM routing engine timed out after {self.timeout}s.",
+                provider="osrm",
+                status_code=504,
+            )
+        except requests.exceptions.ConnectionError as ce:
+            logger.warning("Failed to connect to OSRM at %s: %s", self.base_url, ce)
+            raise RoutingProviderError(
+                "Could not connect to OSRM routing engine. Upstream service may be unavailable.",
+                provider="osrm",
+                status_code=503,
+            )
+        except requests.exceptions.RequestException as re:
+            logger.error("OSRM request exception: %s", re)
+            raise RoutingProviderError(
+                f"OSRM routing request failed: {re}",
+                provider="osrm",
+                status_code=502,
+            )
+
+        return self._parse_osrm_response(response, request)
+
+    def _parse_osrm_response(self, response: requests.Response, request: RoutingRequest) -> RoutingResult:
+        status_code = response.status_code
+        try:
+            data = response.json()
+        except ValueError:
+            raise RoutingProviderError(
+                f"OSRM returned non-JSON response (HTTP {status_code}).",
+                provider="osrm",
+                status_code=502,
+            )
+
+        if status_code != 200 or data.get("code") != "Ok":
+            code = data.get("code", "Error")
+            msg = data.get("message", f"HTTP {status_code}")
+            if code == "NoRoute":
+                raise RoutingProviderError(
+                    "No drivable road path could be found connecting the specified waypoints.",
+                    provider="osrm",
+                    status_code=422,
+                )
+            raise RoutingProviderError(
+                f"OSRM routing engine returned error: {code} - {msg}",
+                provider="osrm",
+                status_code=502,
+            )
+
+        routes = data.get("routes", [])
+        if not routes:
+            raise RoutingProviderError(
+                "Malformed OSRM response: empty 'routes' list.",
+                provider="osrm",
+                status_code=502,
+            )
+
+        primary_route = routes[0]
+        geometry = primary_route.get("geometry")
+        if not geometry or geometry.get("type") != "LineString" or "coordinates" not in geometry:
+            raise RoutingProviderError(
+                "Malformed OSRM response: missing or invalid GeoJSON geometry.",
+                provider="osrm",
+                status_code=502,
+            )
+
+        coordinates = geometry["coordinates"]
+        if len(coordinates) < 2:
+            raise RoutingProviderError(
+                "OSRM returned insufficient road geometry points (< 2 coordinates).",
+                provider="osrm",
+                status_code=502,
+            )
+
+        # Distance is in meters, duration in seconds
+        distance_meters = float(primary_route.get("distance", 0.0))
+        duration_seconds = float(primary_route.get("duration", 0.0))
+        distance_km = round(distance_meters / 1000.0, 2)
+        duration_mins = max(1, round(duration_seconds / 60.0))
+
+        # Snapped waypoints
+        osrm_wps = data.get("waypoints", [])
+        snapped_waypoints = []
+        for idx, orig_wp in enumerate(request.waypoints):
+            loc_data = osrm_wps[idx] if idx < len(osrm_wps) else {}
+            snapped_loc = loc_data.get("location")
+            if snapped_loc and len(snapped_loc) == 2:
+                s_lng = round(float(snapped_loc[0]), 7)
+                s_lat = round(float(snapped_loc[1]), 7)
+                disp = round(float(loc_data.get("distance", 0.0)), 1)
+            else:
+                s_lat, s_lng, disp = orig_wp[0], orig_wp[1], 0.0
+
+            snapped_waypoints.append({
+                "original_index": idx,
+                "original_lat": orig_wp[0],
+                "original_lng": orig_wp[1],
+                "snapped_lat": s_lat,
+                "snapped_lng": s_lng,
+                "displacement_meters": disp,
+            })
+
+        metadata = {
+            "routing_engine": "osrm",
+            "profile": request.profile,
+            "weight_name": primary_route.get("weight_name", "routability"),
+        }
+
+        return RoutingResult(
+            geometry=geometry,
+            distance_km=distance_km,
+            duration_mins=duration_mins,
+            coordinate_count=len(coordinates),
+            waypoints_snapped=snapped_waypoints,
+            provider="osrm",
+            warnings=[],
+            metadata=metadata,
+        )
+
+
+class FallbackRoutingProvider(RoutingProvider):
+    """
+    Tries the primary routing provider (e.g. Valhalla).
+    If the primary provider is unreachable (ConnectionError / 503) or times out (504),
+    automatically and seamlessly falls back to the secondary provider (e.g. OSRM).
+    """
+
+    def __init__(self, primary: RoutingProvider, fallback: RoutingProvider):
+        self.primary = primary
+        self.fallback = fallback
+
+    def route(self, request: RoutingRequest) -> RoutingResult:
+        try:
+            return self.primary.route(request)
+        except RoutingProviderError as err:
+            # Check if failure is due to primary provider being offline / unreachable
+            if err.status_code in (503, 504) or "Could not connect" in str(err) or "timed out" in str(err):
+                logger.info(
+                    "Primary routing provider '%s' unavailable (%s). Falling back to secondary provider.",
+                    err.provider,
+                    err.message,
+                )
+                result = self.fallback.route(request)
+                result.warnings.append(
+                    f"Generated via fallback routing provider ({result.provider}) because primary ({err.provider}) was offline."
+                )
+                return result
+            # Unroutable path (422) or client error -> re-raise
+            raise
+
+
 def get_routing_provider(provider_name: Optional[str] = None) -> RoutingProvider:
     """Factory function to instantiate the configured routing provider."""
-    name = (provider_name or getattr(settings, 'ROUTING_PROVIDER', 'valhalla')).lower().strip()
-    if name == 'valhalla':
+    name = (provider_name or getattr(settings, 'ROUTING_PROVIDER', 'auto')).lower().strip()
+    if name == 'osrm':
+        return OSRMRoutingProvider()
+    if name == 'valhalla_strict':
         return ValhallaRoutingProvider()
-    raise RoutingProviderError(f"Unsupported routing provider '{name}'.", provider=name)
+    if name == 'valhalla':
+        if getattr(settings, 'ROUTING_FALLBACK_OSRM', True):
+            return FallbackRoutingProvider(primary=ValhallaRoutingProvider(), fallback=OSRMRoutingProvider())
+        return ValhallaRoutingProvider()
+    # Default 'auto'
+    return FallbackRoutingProvider(primary=ValhallaRoutingProvider(), fallback=OSRMRoutingProvider())
