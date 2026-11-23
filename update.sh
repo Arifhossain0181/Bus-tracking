@@ -7,7 +7,7 @@ echo "==========================================="
 
 # 1. Pull latest code from GitHub
 cd /home/dsriubatac/Bus-tracking
-echo "[1/4] Pulling latest code from GitHub..."
+echo "[1/4] Pulling latest code from GitHub (hij_dev)..."
 git fetch origin hij_dev
 git reset --hard origin/hij_dev
 
@@ -16,7 +16,6 @@ echo "[2/4] Updating Backend (Dependencies, Migrations, Static)..."
 cd /home/dsriubatac/Bus-tracking/backend
 source venv/bin/activate
 pip install -r requirements.txt --quiet
-python manage.py makemigrations --noinput
 python manage.py migrate --noinput
 python manage.py collectstatic --noinput
 
@@ -29,10 +28,10 @@ npm install --silent
 npm run build
 
 # 4. Restart services
-echo "[4/4] Starting Services in persistent background mode..."
-chmod +x /home/dsriubatac/Bus-tracking/start_services.sh
-/home/dsriubatac/Bus-tracking/start_services.sh
+echo "[4/4] Restarting Services in persistent background mode..."
+chmod +x /home/dsriubatac/Bus-tracking/start_services.sh 2>/dev/null || true
+bash /home/dsriubatac/Bus-tracking/start_services.sh
 
 echo "==========================================="
-echo "   Update Completed Successfully!          "
+echo "   UBus Deployment Completed Successfully! "
 echo "==========================================="
