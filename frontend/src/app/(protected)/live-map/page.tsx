@@ -294,7 +294,7 @@ function LiveMapContent() {
                               </span>
                             </div>
                             <p className="text-xs text-slate-500">
-                              {b.route_name || 'Route: Campus Express'} &middot; Reg: {b.license_plate}
+                              {b.route_name ? `Route: ${b.route_name}` : 'Unassigned Route'} &middot; Reg: {b.license_plate}
                             </p>
                           </button>
                         </div>

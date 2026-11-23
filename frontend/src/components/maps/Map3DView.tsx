@@ -83,16 +83,6 @@ export interface Map3DViewProps {
   showOverlayCards?: boolean;
 }
 
-const DEFAULT_UPCOMING_STOPS: StopPoint[] = [
-  { id: 1, name: 'Main Gate', latitude: 23.8103, longitude: 90.4125, isMajor: true },
-  { id: 2, name: 'Science Building', latitude: 23.8120, longitude: 90.4140 },
-  { id: 3, name: 'Library', latitude: 23.8135, longitude: 90.4155, isMajor: true },
-  { id: 4, name: 'Campus Building', latitude: 23.8150, longitude: 90.4170 },
-  { id: 5, name: 'University', latitude: 23.8165, longitude: 90.4185 },
-  { id: 6, name: 'Homer Building', latitude: 23.8180, longitude: 90.4200 },
-  { id: 7, name: 'Exotuator', latitude: 23.8195, longitude: 90.4215 },
-];
-
 export default function Map3DView({
   buses = [],
   routePath,
@@ -435,23 +425,15 @@ export default function Map3DView({
         map.addLayer(threeLayer);
       }
 
-      // Add route polyline if present
+      // Add route polyline only if real route geometry is provided
       if (routePath && routePath.length > 0) {
         setupRouteLayers(map, routePath);
-      } else {
-        // Sample route path if none provided to render neon highway
-        const sampleCoords: [number, number][] = [
-          [90.4100, 23.8085],
-          [90.4125, 23.8103],
-          [90.4150, 23.8125],
-          [90.4180, 23.8150],
-        ];
-        setupRouteLayers(map, sampleCoords);
       }
 
-      // Add stops
-      const activeStops = stops.length > 0 ? stops : DEFAULT_UPCOMING_STOPS;
-      setupStopsLayers(map, activeStops);
+      // Add stops only if real stops are provided
+      if (stops && stops.length > 0) {
+        setupStopsLayers(map, stops);
+      }
     });
 
     map.on('render', () => {
@@ -599,12 +581,12 @@ export default function Map3DView({
     }
   };
 
-  const currentStops = stops.length > 0 ? stops : DEFAULT_UPCOMING_STOPS;
+  const currentStops = stops;
   const currentBus = selectedBusState || (buses.length > 0 ? buses[0] : null);
 
-  const speedKmh = currentBus?.speed != null ? Math.round(currentBus.speed * 3.6) : 24;
-  const busLabel = currentBus?.busNumber || 'Bus 12';
-  const routeLabel = currentBus?.routeName || 'Campus Express';
+  const speedKmh = currentBus?.speed != null ? Math.round(currentBus.speed * 3.6) : null;
+  const busLabel = currentBus?.busNumber || '—';
+  const routeLabel = currentBus?.routeName || '—';
 
   return (
     <div className={`relative w-full overflow-hidden rounded-3xl shadow-2xl border border-slate-700/50 bg-slate-950 ${heightClass}`}>
@@ -612,22 +594,34 @@ export default function Map3DView({
       <div ref={containerRef} className="w-full h-full" />
 
       {/* 1. FLOATING 3D BUS BILLBOARD TAG (Directly above the 3D bus in screen space) */}
-      {busScreenPos && (
+      {busScreenPos && currentBus && (
         <div
           className="absolute pointer-events-none transform -translate-x-1/2 -translate-y-full z-20 transition-all duration-75"
           style={{ left: busScreenPos.x, top: busScreenPos.y - 42 }}
         >
           <div className="flex items-center gap-1.5 px-3 py-1 bg-white text-slate-900 rounded-full shadow-2xl border border-slate-200/90 font-bold text-xs tracking-tight">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span
+              className={`w-2 h-2 rounded-full ${
+                currentBus.status === 'moving'
+                  ? 'bg-emerald-500 animate-pulse'
+                  : currentBus.status === 'stopped'
+                  ? 'bg-amber-500'
+                  : currentBus.status === 'stale'
+                  ? 'bg-amber-500'
+                  : 'bg-slate-400'
+              }`}
+            />
             <BusIcon className="w-3.5 h-3.5 text-blue-600" />
-            <span>Live &bull; ETA 4 mins</span>
+            <span>
+              {currentBus.busNumber} &bull; {currentBus.status?.toUpperCase() || 'STANDBY'}
+            </span>
           </div>
           {/* Downward triangle pointer to bus roof */}
           <div className="w-0 h-0 border-l-4 border-r-4 border-t-[6px] border-l-transparent border-r-transparent border-t-white mx-auto shadow-sm" />
         </div>
       )}
 
-      {/* 2. LEFT FROSTED GLASS NAVIGATION PANEL (Exact match to screenshot!) */}
+      {/* 2. LEFT FROSTED GLASS NAVIGATION PANEL */}
       {showOverlayCards && (
         <aside className="absolute top-4 left-4 bottom-4 z-20 w-80 bg-slate-950/75 backdrop-blur-2xl border border-white/10 rounded-3xl p-5 text-white flex flex-col justify-between shadow-2xl">
           <div className="space-y-4">
@@ -644,76 +638,86 @@ export default function Map3DView({
             </div>
 
             {/* Active Bus & Route Info Card */}
-            <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400">Active:</span>
-                <span className="font-bold text-white">{busLabel}</span>
+            {currentBus ? (
+              <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Active:</span>
+                  <span className="font-bold text-white">{busLabel}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Route:</span>
+                  <span className="font-semibold text-cyan-300">{routeLabel}</span>
+                </div>
+                {speedKmh != null && (
+                  <div className="flex items-center justify-between pt-1 border-t border-white/10">
+                    <span className="text-slate-400">Speed:</span>
+                    <span className="font-bold text-emerald-400">{speedKmh} km/h</span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !isFollowing;
+                    setIsFollowing(next);
+                    if (currentBus) onSelectBus?.(currentBus.id);
+                  }}
+                  className={`w-full py-1.5 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 transition ${
+                    isFollowing
+                      ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/25'
+                      : 'bg-white/10 text-slate-300 hover:bg-white/15'
+                  }`}
+                >
+                  <Navigation className="w-3.5 h-3.5" />
+                  <span>{isFollowing ? 'Tracking Locked (3D)' : 'Lock 3D Camera'}</span>
+                </button>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400">Route:</span>
-                <span className="font-semibold text-cyan-300">{routeLabel}</span>
+            ) : (
+              <div className="p-3 rounded-2xl bg-white/5 border border-white/10 text-xs text-slate-400 text-center">
+                No active bus telemetry
               </div>
-              <div className="flex items-center justify-between pt-1 border-t border-white/10">
-                <span className="text-slate-400">Est. Arrival:</span>
-                <span className="font-bold text-emerald-400">4 mins</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const next = !isFollowing;
-                  setIsFollowing(next);
-                  if (currentBus) onSelectBus?.(currentBus.id);
-                }}
-                className={`w-full py-1.5 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 transition ${
-                  isFollowing
-                    ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/25'
-                    : 'bg-white/10 text-slate-300 hover:bg-white/15'
-                }`}
-              >
-                <Navigation className="w-3.5 h-3.5" />
-                <span>{isFollowing ? 'Tracking Locked (3D)' : 'Lock 3D Camera'}</span>
-              </button>
-            </div>
+            )}
 
             {/* Upcoming Stops Timeline */}
-            <div className="space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                Upcoming stops
-              </h3>
-              <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
-                {currentStops.map((stop, idx) => {
-                  const isCurrent = idx === 0;
-                  const isDestination = idx === currentStops.length - 1;
-                  return (
-                    <div
-                      key={stop.id || idx}
-                      className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs transition ${
-                        isCurrent
-                          ? 'bg-blue-600/30 text-white font-semibold border border-blue-500/40 shadow-sm'
-                          : 'text-slate-300 hover:bg-white/5'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span
-                          className={`w-2 h-2 rounded-full ${
-                            isCurrent
-                              ? 'bg-cyan-400 ring-4 ring-cyan-500/20 animate-pulse'
-                              : isDestination
-                              ? 'bg-rose-500'
-                              : 'bg-slate-500'
-                          }`}
-                        />
-                        <span className="truncate max-w-[140px]">{stop.name}</span>
+            {currentStops.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Upcoming stops
+                </h3>
+                <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
+                  {currentStops.map((stop, idx) => {
+                    const isCurrent = idx === 0;
+                    const isDestination = idx === currentStops.length - 1;
+                    return (
+                      <div
+                        key={stop.id || idx}
+                        className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs transition ${
+                          isCurrent
+                            ? 'bg-blue-600/30 text-white font-semibold border border-blue-500/40 shadow-sm'
+                            : 'text-slate-300 hover:bg-white/5'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span
+                            className={`w-2 h-2 rounded-full ${
+                              isCurrent
+                                ? 'bg-cyan-400 ring-4 ring-cyan-500/20 animate-pulse'
+                                : isDestination
+                                ? 'bg-rose-500'
+                                : 'bg-slate-500'
+                            }`}
+                          />
+                          <span className="truncate max-w-[140px]">{stop.name}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-slate-400">
+                          {isCurrent && <MapPin className="w-3.5 h-3.5 text-emerald-400" />}
+                          {!isCurrent && !isDestination && <Info className="w-3.5 h-3.5 text-slate-500" />}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1.5 text-slate-400">
-                        {isCurrent && <MapPin className="w-3.5 h-3.5 text-emerald-400" />}
-                        {!isCurrent && !isDestination && <Info className="w-3.5 h-3.5 text-slate-500" />}
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Bottom Help & Settings Icons */}
@@ -815,23 +819,40 @@ export default function Map3DView({
         )}
       </div>
 
-      {/* 4. BOTTOM-CENTER FLOATING HUD (Exact match to screenshot!) */}
-      <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-20">
-        <div className="flex items-center gap-4 px-5 py-2.5 rounded-2xl bg-slate-950/80 backdrop-blur-2xl border border-white/15 text-white shadow-2xl text-xs">
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-slate-200">Live Tracking ({currentBus?.driverName?.split(' ')[0] || 'arif'})</span>
-            <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-bold text-[10px] flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-              LIVE
-            </span>
-          </div>
-          <div className="h-3.5 w-px bg-white/20" />
-          <div className="flex items-center gap-3 text-slate-300">
-            <span>Speed: <strong className="text-white">{speedKmh} km/h</strong></span>
-            <span>Occupancy: <strong className="text-white">35%</strong></span>
+      {/* 4. BOTTOM-CENTER FLOATING HUD */}
+      {currentBus && (
+        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-20">
+          <div className="flex items-center gap-4 px-5 py-2.5 rounded-2xl bg-slate-950/80 backdrop-blur-2xl border border-white/15 text-white shadow-2xl text-xs">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-slate-200">
+                Live Tracking ({currentBus.driverName || currentBus.busNumber})
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded-full ${
+                  currentBus.status === 'moving'
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                    : currentBus.status === 'stopped'
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                    : currentBus.status === 'stale'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                    : 'bg-slate-700/50 text-slate-300 border border-slate-600/40'
+                } font-bold text-[10px] flex items-center gap-1`}
+              >
+                {currentBus.status === 'moving' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                )}
+                {currentBus.status?.toUpperCase() || 'STANDBY'}
+              </span>
+            </div>
+            <div className="h-3.5 w-px bg-white/20" />
+            <div className="flex items-center gap-3 text-slate-300">
+              <span>
+                Speed: <strong className="text-white">{speedKmh != null ? `${speedKmh} km/h` : '—'}</strong>
+              </span>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* 5. RIGHT-SIDE TOOLBAR CONTROLS (Exact match to screenshot!) */}
       <div className="absolute top-4 right-4 z-20 flex flex-col gap-2.5">

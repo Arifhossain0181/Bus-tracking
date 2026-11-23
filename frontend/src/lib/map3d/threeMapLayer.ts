@@ -5,7 +5,7 @@ import {
   type CustomRenderMethodInput,
   type Map as MapLibreMap,
 } from 'maplibre-gl';
-import { createProceduralBus, loadBusModel } from './busMesh';
+import { createProceduralBus, loadBusModel, updateBusNumber } from './busMesh';
 
 export interface ActiveBusData {
   id: number;
@@ -45,7 +45,7 @@ export class ThreeMap3DLayer implements CustomLayerInterface {
 
   private busesMap: Map<number, BusRuntimeState> = new Map();
   private followingBusId: number | null = null;
-  private glbModelUrl: string | null = '/models/bus.glb';
+  private glbModelUrl: string | null = null;
   private customScale: number = 1.25; // 1.25x miniature scale for isometric readability
   private sunLight: THREE.DirectionalLight | null = null;
   private skyLight: THREE.DirectionalLight | null = null;
@@ -195,6 +195,9 @@ export class ThreeMap3DLayer implements CustomLayerInterface {
         existing.targetLng = data.longitude;
         existing.targetLat = data.latitude;
         existing.targetHeading = newHeading;
+        if (existing.data.busNumber !== data.busNumber) {
+          updateBusNumber(existing.group, data.busNumber);
+        }
         existing.data = data;
       } else {
         // Create new 3D Bus

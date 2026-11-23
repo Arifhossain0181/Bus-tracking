@@ -518,6 +518,15 @@ export async function acquireGpsFix(options?: {
     options?.geolocationProvider ??
     (typeof navigator !== 'undefined' ? navigator.geolocation : undefined);
 
+  if (typeof window !== 'undefined' && window.isSecureContext === false) {
+    return {
+      success: false,
+      status: 'permission_denied',
+      errorMessage:
+        'Location permission denied: Geolocation requires HTTPS or http://localhost. Browsers block location access over plain HTTP network IPs.',
+    };
+  }
+
   if (!geo) {
     return {
       success: false,
@@ -582,7 +591,7 @@ export async function acquireGpsFix(options?: {
             success: false,
             status: 'permission_denied',
             errorMessage:
-              'Location permission was denied. Please allow location access in your browser settings.',
+              'Location permission was denied. If allowed in your browser, ensure Location is ON in Windows Settings (Privacy & security > Location), or hard-refresh (Ctrl+F5).',
           });
         } else if (err.code === 2) {
           resolve({
