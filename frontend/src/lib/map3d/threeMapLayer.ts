@@ -135,8 +135,8 @@ export class ThreeMap3DLayer implements CustomLayerInterface {
       state.group.rotation.z = -THREE.MathUtils.degToRad(state.currentHeading);
       state.group.scale.set(this.customScale, this.customScale, this.customScale);
 
-      // Follow camera lock
-      if (this.followingBusId === id && this.map) {
+      // Follow camera lock: ONLY jump if explicitly enabled, never override user dragging
+      if (this.followingBusId === id && this.map && !this.map.isMoving()) {
         this.map.jumpTo({
           center: [state.currentLng, state.currentLat],
         });

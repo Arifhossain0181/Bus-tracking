@@ -178,7 +178,7 @@ export default function BusGisMap({
   const [is3DMode, setIs3DMode] = useState(true); // Default to True 3D mode with custom IUBAT bus model
   const [activeLayer, setActiveLayer] = useState<MapLayerPreset>('liberty');
   const [selectedBusId, setSelectedBusId] = useState<number | null>(focusedBusId);
-  const [isFollowing, setIsFollowing] = useState<boolean>(true); // Auto-follow enabled by default!
+  const [isFollowing, setIsFollowing] = useState<boolean>(false); // Allow free panning by default; enable follow on click
   const [popupBusData, setPopupBusData] = useState<BusPopupData | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -685,6 +685,12 @@ export default function BusGisMap({
       setupBreadcrumbLayer(map, breadcrumbTrailRef.current || []);
     });
 
+    // Auto-disable follow lock if user interacts with the map (pan, touch, zoom, rotate)
+    map.on('dragstart', () => setIsFollowing(false));
+    map.on('touchstart', () => setIsFollowing(false));
+    map.on('rotatestart', () => setIsFollowing(false));
+    map.on('pitchstart', () => setIsFollowing(false));
+
     mapRef.current = map;
 
     const busMarkers = busMarkersRef.current;
@@ -791,20 +797,21 @@ export default function BusGisMap({
 
       if (!marker) {
         const el = document.createElement('div');
+        // Compact badge positioned cleanly above the 3D vehicle without masking it
         el.className =
           'bus-gis-marker flex flex-col items-center select-none cursor-pointer group pointer-events-auto transition-transform hover:scale-105';
         el.innerHTML = `
-          <!-- 1. Floating Location Tag (Green Pill matching reference image) -->
-          <div class="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#007a4d] text-white shadow-2xl border border-emerald-400/60 font-extrabold text-xs tracking-wide whitespace-nowrap hover:bg-[#008f5a] transition">
-            <span class="w-2 h-2 rounded-full bg-white shadow-sm inline-block shrink-0 animate-pulse"></span>
+          <!-- 1. Floating Location Tag (Green Pill matching prototype) -->
+          <div class="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#007a4d]/95 text-white shadow-lg border border-emerald-400/50 font-bold text-[10px] tracking-wide whitespace-nowrap hover:bg-[#008f5a] transition">
+            <span class="w-1.5 h-1.5 rounded-full bg-white shadow-sm inline-block shrink-0 animate-pulse"></span>
             <span class="location-name-text">${locationName}</span>
           </div>
-          <div class="w-0 h-0 border-l-[4px] border-r-[4px] border-t-[5px] border-l-transparent border-r-transparent border-t-[#007a4d] mx-auto shadow-sm"></div>
+          <div class="w-0 h-0 border-l-[3px] border-r-[3px] border-t-[4px] border-l-transparent border-r-transparent border-t-[#007a4d] mx-auto shadow-sm"></div>
 
           <!-- 2. Bus Number & Speed Badge -->
-          <div class="mt-1 flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-950/85 backdrop-blur-md border ${
-            isSelected ? 'border-cyan-400 ring-2 ring-cyan-400/40 text-cyan-300' : 'border-white/20 text-white'
-          } text-[10px] font-bold shadow-xl">
+          <div class="mt-0.5 flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-950/85 backdrop-blur-md border ${
+            isSelected ? 'border-cyan-400 ring-1 ring-cyan-400/50 text-cyan-300' : 'border-white/20 text-white'
+          } text-[9px] font-bold shadow-lg">
             <span class="status-dot w-1.5 h-1.5 rounded-full ${
               status === 'moving'
                 ? 'bg-emerald-400 animate-ping'
@@ -817,13 +824,13 @@ export default function BusGisMap({
                 : 'bg-slate-400'
             }"></span>
             <span class="bus-label">${bus.busNumber}</span>
-            <span class="speed-badge px-1.5 py-0.2 rounded ${
+            <span class="speed-badge px-1 py-0.2 rounded ${
               status === 'offline'
                 ? 'bg-slate-800 text-slate-400'
                 : status === 'stale'
                 ? 'bg-amber-500/20 text-amber-300'
                 : 'bg-cyan-500/20 text-cyan-300'
-            } text-[9px] font-mono">${markerBadgeText}</span>
+            } text-[8px] font-mono">${markerBadgeText}</span>
           </div>
         `;
         el.onclick = (e) => {
@@ -831,7 +838,8 @@ export default function BusGisMap({
           handleBusClick(bus);
         };
 
-        marker = new Marker({ element: el, anchor: 'bottom' })
+        // Offset upward (e.g. 50px above road surface) so 3D Three.js vehicle model is completely visible below the badge
+        marker = new Marker({ element: el, anchor: 'bottom', offset: [0, -45] })
           .setLngLat([busCoords[0], busCoords[1]])
           .addTo(map);
 
@@ -839,6 +847,7 @@ export default function BusGisMap({
       } else {
         // Update marker position & dynamic state
         marker.setLngLat([busCoords[0], busCoords[1]]);
+        marker.setOffset([0, -45]);
         const el = marker.getElement();
         const locationText = el.querySelector('.location-name-text') as HTMLElement | null;
         if (locationText) locationText.textContent = locationName;
