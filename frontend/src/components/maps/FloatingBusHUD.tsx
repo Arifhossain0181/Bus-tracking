@@ -22,6 +22,7 @@ export interface FloatingBusHUDProps {
   currentLocationName?: string;
   nextStopName?: string;
   distanceToNextKm?: number | null;
+  userDistanceKm?: number | null;
   etaMinutes?: number | null;
   routeProgressPercent: number;
   lastUpdatedFormatted: string;
@@ -40,6 +41,7 @@ export default function FloatingBusHUD({
   currentLocationName,
   nextStopName,
   distanceToNextKm = null,
+  userDistanceKm = null,
   etaMinutes = null,
   routeProgressPercent = 0,
   lastUpdatedFormatted = 'Just now',
@@ -171,22 +173,37 @@ export default function FloatingBusHUD({
               <div className="p-3 rounded-2xl bg-white/5 border border-white/10 hover:border-blue-500/30 transition">
                 <div className="flex items-center gap-1.5 text-slate-400 text-[11px] font-medium uppercase tracking-wider">
                   <TrendingUp className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Distance</span>
+                  <span>{userDistanceKm != null ? 'From You' : 'To Next Stop'}</span>
                 </div>
                 <div className="mt-1 flex items-baseline gap-1">
                   <span className="text-xl md:text-2xl font-black text-white tracking-tight">
-                    {distanceToNextKm != null
+                    {userDistanceKm != null
+                      ? userDistanceKm < 1
+                        ? Math.round(userDistanceKm * 1000)
+                        : userDistanceKm.toFixed(1)
+                      : distanceToNextKm != null
                       ? distanceToNextKm === 0
                         ? '0'
                         : distanceToNextKm.toFixed(1)
                       : '—'}
                   </span>
-                  {distanceToNextKm != null && (
-                    <span className="text-xs font-semibold text-slate-400">
-                      {distanceToNextKm === 0 ? 'At stop' : 'km away'}
-                    </span>
-                  )}
+                  <span className="text-xs font-semibold text-slate-400">
+                    {userDistanceKm != null
+                      ? userDistanceKm < 1
+                        ? 'meters away'
+                        : 'km away'
+                      : distanceToNextKm != null
+                      ? distanceToNextKm === 0
+                        ? 'At stop'
+                        : 'km to stop'
+                      : ''}
+                  </span>
                 </div>
+                {userDistanceKm != null && distanceToNextKm != null && (
+                  <div className="text-[10px] text-slate-400 mt-0.5 truncate">
+                    Next Stop: <span className="text-slate-300 font-semibold">{distanceToNextKm.toFixed(1)} km</span>
+                  </div>
+                )}
               </div>
 
               {/* 4. ETA */}

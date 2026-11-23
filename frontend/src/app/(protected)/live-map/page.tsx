@@ -71,29 +71,39 @@ function LiveMapContent() {
     if (routes.length === 0) return null;
 
     // Check if focused driver has a matching route
-    if (focusedDriverId != null) {
-      const activeDriver = drivers.find((d) => d.driver_id === focusedDriverId);
-      if (activeDriver?.route_id) {
-        const rId = activeDriver.route_id;
-        const found = routes.find((r) => r.id === rId);
-        if (found) return found;
-      }
-      if (activeDriver?.route_name) {
-        const rName = activeDriver.route_name.toLowerCase();
-        const found = routes.find((r) => r.name.toLowerCase() === rName);
-        if (found) return found;
-      }
+    const activeDriver = focusedDriverId != null
+      ? drivers.find((d) => d.driver_id === focusedDriverId)
+      : drivers[0];
 
-      // Check fleet bus matching focused id
+    if (activeDriver?.route_id) {
+      const rId = activeDriver.route_id;
+      const found = routes.find((r) => r.id === rId);
+      if (found) return found;
+    }
+    if (activeDriver?.route_name) {
+      const rName = activeDriver.route_name.toLowerCase().trim();
+      const found = routes.find((r) => r.name.toLowerCase().trim() === rName || r.name.toLowerCase().includes(rName));
+      if (found) return found;
+    }
+
+    // Check fleet bus matching focused id
+    if (focusedDriverId != null) {
       const fleetBus = busesList.find((b) => b.id === focusedDriverId || b.id + 10000 === focusedDriverId);
       if (fleetBus?.current_route) {
         const rId = fleetBus.current_route;
         const found = routes.find((r) => r.id === rId);
         if (found) return found;
       }
+      if (fleetBus?.route_name) {
+        const rName = fleetBus.route_name.toLowerCase().trim();
+        const found = routes.find((r) => r.name.toLowerCase().trim() === rName || r.name.toLowerCase().includes(rName));
+        if (found) return found;
+      }
     }
 
-    return routes[0];
+    // Fallback: pick the first route with published geometry or stops
+    const routeWithGeo = routes.find((r) => (r.stops && r.stops.length > 0) || r.active_geometry);
+    return routeWithGeo || routes[0];
   }, [routes, focusedDriverId, drivers, busesList]);
 
   // Convert route stops to StopInfo[] and GeoJSON routePath

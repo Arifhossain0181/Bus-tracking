@@ -29,7 +29,7 @@ import {
   splitRouteByBusPosition,
   type StopInfo,
 } from '@/lib/map3d/routeGeometry';
-import { isValidCoordinate } from '@/lib/trackingStatus';
+import { isValidCoordinate, calculateDistanceMeters } from '@/lib/trackingStatus';
 import FloatingBusHUD from './FloatingBusHUD';
 import BusMarkerPopup, { type BusPopupData } from './BusMarkerPopup';
 import MapInterfaceControls, { type MapLayerPreset } from './MapInterfaceControls';
@@ -175,7 +175,7 @@ export default function BusGisMap({
   const breadcrumbTrailRef = useRef(breadcrumbTrail);
   breadcrumbTrailRef.current = breadcrumbTrail;
 
-  const [is3DMode, setIs3DMode] = useState(false); // Default to flat 2D mode for mobile battery & performance
+  const [is3DMode, setIs3DMode] = useState(true); // Default to True 3D mode with custom IUBAT bus model
   const [activeLayer, setActiveLayer] = useState<MapLayerPreset>('liberty');
   const [selectedBusId, setSelectedBusId] = useState<number | null>(focusedBusId);
   const [isFollowing, setIsFollowing] = useState<boolean>(true); // Auto-follow enabled by default!
@@ -198,6 +198,21 @@ export default function BusGisMap({
     }
     return false;
   }, [roadGeometryProp, routePath, stops]);
+
+  // Selected bus object
+  const selectedBus = useMemo(() => {
+    return buses.find((b) => b.id === selectedBusId) || (buses.length > 0 ? buses[0] : null);
+  }, [buses, selectedBusId]);
+
+  const userDistanceKm = useMemo(() => {
+    if (!userPosition || !selectedBus) return null;
+    const [uLat, uLng] = userPosition;
+    if (!isValidCoordinate(uLat, uLng) || !isValidCoordinate(selectedBus.latitude, selectedBus.longitude)) {
+      return null;
+    }
+    const meters = calculateDistanceMeters(uLat, uLng, selectedBus.latitude, selectedBus.longitude);
+    return meters / 1000;
+  }, [userPosition, selectedBus]);
 
   // Open bus popup
   const handleBusClick = useCallback(
@@ -229,11 +244,6 @@ export default function BusGisMap({
       setSelectedBusId(buses[0].id);
     }
   }, [focusedBusId, buses, selectedBusId]);
-
-  // Selected bus object
-  const selectedBus = useMemo(() => {
-    return buses.find((b) => b.id === selectedBusId) || (buses.length > 0 ? buses[0] : null);
-  }, [buses, selectedBusId]);
 
   // Active planned route path
   const activeRoadPath = useMemo(() => {
@@ -631,7 +641,7 @@ export default function BusGisMap({
       style: BASE_STYLES[activeLayer] || PILOT_MAP_STYLE_URL,
       center: initialCenter,
       zoom: 16.5,
-      pitch: DEFAULT_CAMERA_PITCH,
+      pitch: ISOMETRIC_CAMERA_PITCH,
       bearing: 0,
       maxPitch: 82,
       maxZoom: 22,
@@ -1109,6 +1119,7 @@ export default function BusGisMap({
           currentLocationName={routeMetrics.currentLocationName}
           nextStopName={routeMetrics.nextStopName}
           distanceToNextKm={routeMetrics.distanceToNextKm}
+          userDistanceKm={userDistanceKm}
           etaMinutes={routeMetrics.etaMinutes}
           routeProgressPercent={routeMetrics.progressPercent}
           lastUpdatedFormatted={

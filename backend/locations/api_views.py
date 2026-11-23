@@ -215,15 +215,24 @@ def start_journey(request):
                 assignment.bus.current_route = assignment.route
                 assignment.bus.save(update_fields=['current_route'])
         else:
-            # Safe design: Journey starts, but location-sharing remains inactive
-            # until the first verified GPS fix is received via record_driver_gps.
+            # Active journey started: Mark DriverLocation as sharing immediately
+            # so client status queries recognize an active sharing session while awaiting first GPS telemetry packet
             existing_loc = DriverLocation.objects.filter(driver=request.user).first()
             if existing_loc:
                 existing_loc.journey = journey
-                existing_loc.is_sharing = False
+                existing_loc.is_sharing = True
                 existing_loc.session_started = timezone.now()
                 existing_loc.save(update_fields=['journey', 'is_sharing', 'session_started'])
-            # Never create or publish fake (0, 0) coordinates or use campus fallback.
+            else:
+                # Create default sharing record if driver location didn't exist before
+                DriverLocation.objects.create(
+                    driver=request.user,
+                    journey=journey,
+                    latitude=Decimal('0'),
+                    longitude=Decimal('0'),
+                    is_sharing=True,
+                    session_started=timezone.now()
+                )
         
         # Create notification for journey start
         Notification.create_journey_notification(journey, 'journey_start', request.user)
