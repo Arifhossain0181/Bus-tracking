@@ -82,7 +82,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     ...(!regular
       ? [{ href: '/dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> }]
       : []),
-    { href: '/live-map', label: 'Live Map', icon: <MapPin className="w-4 h-4" /> },
+    { href: '/live-map', label: 'Live 3D Map', icon: <MapPin className="w-4 h-4 text-cyan-600" /> },
     { href: '/routes', label: 'Routes', icon: <Route className="w-4 h-4" /> },
     { href: '/schedules', label: 'Schedules', icon: <CalendarDays className="w-4 h-4" /> },
     ...(regular || role === 'authority'
@@ -138,9 +138,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ]
       : [];
 
-  const experimentalLinks: NavItem[] = [
-    { href: '/experimental/maplibre', label: 'MapLibre 3D (Experimental)', icon: <Box className="w-4 h-4 text-indigo-600" /> },
-  ];
+  const experimentalLinks: NavItem[] = [];
 
   const isActive = (href: string) => {
     if (href === '/dashboard') return pathname === '/dashboard';

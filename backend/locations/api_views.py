@@ -28,10 +28,31 @@ def start_journey(request):
         # Check for existing active journey for this driver (locked)
         active_journey = Journey.objects.select_for_update().filter(driver=request.user, status='active').first()
         if active_journey:
+            journey = active_journey
+            # Update driver location and activate sharing
+            defaults = {
+                'is_sharing': True,
+                'journey': journey,
+            }
+            if dec_lat is not None and dec_lon is not None:
+                defaults.update({
+                    'latitude': dec_lat,
+                    'longitude': dec_lon,
+                    'accuracy': acc_val,
+                    'speed': spd_val,
+                    'heading': hdg_val,
+                })
+            location, _ = DriverLocation.objects.update_or_create(
+                driver=request.user,
+                defaults=defaults
+            )
             return Response({
-                'error': 'You already have an active journey',
-                'journey_id': active_journey.id
-            }, status=status.HTTP_400_BAD_REQUEST)
+                'status': 'success',
+                'message': 'Active journey resumed and location sharing enabled',
+                'journey_id': journey.id,
+                'bus_number': journey.bus.bus_number if journey.bus else '',
+                'route_name': journey.route.name if journey.route else ''
+            })
         
         # Get active assignment
         try:
@@ -429,16 +450,26 @@ def get_active_locations(request):
             'is_active': loc.is_active,
         }
         
-        if loc.journey:
-            if loc.journey.bus:
-                data['bus_id'] = loc.journey.bus.id
-                data['bus_number'] = loc.journey.bus.bus_number
+        if loc.journey and loc.journey.bus:
+            data['bus_id'] = loc.journey.bus.id
+            data['bus_number'] = loc.journey.bus.bus_number
             if loc.journey.route:
                 data['route_name'] = loc.journey.route.name
                 data['route_id'] = loc.journey.route.id
             data['journey_id'] = loc.journey.id
-            data['journey_start'] = loc.journey.start_time.isoformat()
-        
+            if loc.journey.start_time:
+                data['journey_start'] = loc.journey.start_time.isoformat()
+        else:
+            # Fallback to driver's active BusAssignment so bus and route info are never missing
+            from buses.models import BusAssignment
+            assignment = BusAssignment.objects.filter(driver=loc.driver, is_active=True).select_related('bus', 'route').first()
+            if assignment and assignment.bus:
+                data['bus_id'] = assignment.bus.id
+                data['bus_number'] = assignment.bus.bus_number
+                if assignment.route:
+                    data['route_name'] = assignment.route.name
+                    data['route_id'] = assignment.route.id
+
         result.append(data)
     
     return Response(result)

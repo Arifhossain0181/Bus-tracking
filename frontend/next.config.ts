@@ -36,6 +36,10 @@ const nextConfig: NextConfig = {
         source: '/university.app',
         destination: '/live-map',
       },
+      {
+        source: '/experimental/maplibre',
+        destination: '/live-map',
+      },
     ];
   },
 };

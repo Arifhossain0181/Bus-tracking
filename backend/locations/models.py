@@ -62,18 +62,17 @@ class DriverLocation(models.Model):
 
     @classmethod
     def get_active_drivers(cls):
-        """Get all drivers currently sharing location with active journeys."""
-        threshold = timezone.now() - timedelta(seconds=60)
+        """Get all drivers currently sharing location (allows up to 5 minutes tolerance)."""
+        threshold = timezone.now() - timedelta(minutes=5)
         return cls.objects.filter(
             is_sharing=True,
             last_updated__gte=threshold,
-            journey__status='active'
         ).exclude(latitude=0, longitude=0).select_related('driver', 'journey__bus', 'journey__route')
 
     @classmethod
     def expire_inactive(cls):
-        """Mark stale locations as not sharing."""
-        threshold = timezone.now() - timedelta(seconds=120)
+        """Mark stale locations as not sharing only after prolonged inactivity (15 mins)."""
+        threshold = timezone.now() - timedelta(minutes=15)
         cls.objects.filter(
             is_sharing=True,
             last_updated__lt=threshold

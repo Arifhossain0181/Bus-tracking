@@ -75,15 +75,32 @@ def trigger_eta_update_if_needed(bus, route, throttle_seconds=ETA_THROTTLE_SECON
 def record_driver_gps(driver, latitude, longitude, accuracy=None, speed=None, heading=None, force_eta=False, throttle_seconds=ETA_THROTTLE_SECONDS, timestamp=None):
     """
     Unified ingestion pipeline for driver GPS telemetry:
-    1. Validates active journey for the driver.
+    1. Validates or auto-resumes active journey for the driver.
     2. Atomically records DriverLocation, LocationHistory, and synchronized BusLocation.
     3. Safely triggers throttled ETA calculation without blocking or failing GPS recording.
-    4. Protects against out-of-order delayed packets overwriting newer live location.
+    4. Accepts genuine live telemetry without clock-skew drops.
     5. Returns a standard status payload including bus_id for frontend tracking consumers.
     """
     journey = Journey.get_active_journey(driver)
     if not journey:
-        raise ValueError("No active journey. Start a journey first.")
+        # Check if driver has an active bus assignment; if so, auto-resume/create journey
+        from buses.models import BusAssignment
+        assignment = BusAssignment.objects.filter(driver=driver, is_active=True).select_related('bus', 'route').first()
+        if assignment:
+            journey, _ = Journey.objects.get_or_create(
+                driver=driver,
+                status='active',
+                defaults={
+                    'bus': assignment.bus,
+                    'route': assignment.route,
+                    'assignment': assignment,
+                    'start_time': timezone.now(),
+                    'start_latitude': _to_decimal(latitude),
+                    'start_longitude': _to_decimal(longitude),
+                }
+            )
+        else:
+            raise ValueError("No active journey. Start a journey first.")
 
     # Convert coordinates and metrics safely
     dec_lat = _to_decimal(latitude, max_digits=10, decimal_places=7)
@@ -107,37 +124,8 @@ def record_driver_gps(driver, latitude, longitude, accuracy=None, speed=None, he
     # GPS accuracy threshold: <= 50 meters considered accurate
     is_accurate = True if accuracy is None else (float(accuracy) <= 50.0)
 
+    # Always record the real-time server reception time to prevent phone clock skew rejections
     record_time = timezone.now()
-    if timestamp is not None:
-        parsed_ts = None
-        if isinstance(timestamp, str):
-            from django.utils.dateparse import parse_datetime
-            parsed_ts = parse_datetime(timestamp)
-        elif hasattr(timestamp, 'strftime'):
-            parsed_ts = timestamp
-
-        if parsed_ts is not None:
-            if timezone.is_naive(parsed_ts):
-                parsed_ts = timezone.make_aware(parsed_ts)
-
-            # Check for out-of-order telemetry:
-            # If live location has a newer timestamp (>2s), do not overwrite live state
-            existing_loc = DriverLocation.objects.filter(driver=driver).first()
-            if existing_loc and existing_loc.last_updated:
-                if parsed_ts < (existing_loc.last_updated - timezone.timedelta(seconds=2)):
-                    logger.warning(
-                        "Ignored out-of-order GPS packet for driver %s (packet=%s, live=%s)",
-                        driver.username, parsed_ts.isoformat(), existing_loc.last_updated.isoformat()
-                    )
-                    return {
-                        'status': 'ignored',
-                        'message': 'Out-of-order GPS update ignored for live state.',
-                        'timestamp': existing_loc.last_updated.isoformat(),
-                        'bus_id': journey.bus.id,
-                        'bus_location_id': None,
-                        'eta_updated': False,
-                    }
-            record_time = parsed_ts
 
     with transaction.atomic():
         # 1. Update or create DriverLocation
