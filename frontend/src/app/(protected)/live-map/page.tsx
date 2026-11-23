@@ -109,9 +109,16 @@ function LiveMapContent() {
     }));
   }, [activeRoute]);
 
-  const routePath: [number, number][] = useMemo(() => {
-    return routeStops.map((s) => [s.longitude, s.latitude]);
-  }, [routeStops]);
+  const plannedRoadGeometry = useMemo(() => {
+    const coords = activeRoute?.active_geometry?.coordinates || activeRoute?.active_revision?.geometry?.coordinates;
+    return Array.isArray(coords) && coords.length >= 2 ? coords : undefined;
+  }, [activeRoute]);
+
+  const routePath: [number, number][] | undefined = useMemo(() => {
+    if (plannedRoadGeometry) return plannedRoadGeometry;
+    if (routeStops.length >= 2) return routeStops.map((s) => [s.longitude, s.latitude]);
+    return undefined;
+  }, [plannedRoadGeometry, routeStops]);
 
   const locateMe = () => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) return;
@@ -185,7 +192,8 @@ function LiveMapContent() {
           <LiveMapView
             drivers={drivers}
             busesList={busesList}
-            routePath={routePath.length > 0 ? routePath : undefined}
+            routePath={routePath}
+            roadGeometry={plannedRoadGeometry}
             stops={routeStops}
             routeName={activeRoute?.name || 'Main Campus Transit Line'}
             originName={activeRoute?.origin_name || 'Main Campus Station'}

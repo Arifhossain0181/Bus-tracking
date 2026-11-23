@@ -84,6 +84,41 @@ def bus_detail_api(request, pk):
             ]
         else:
             data['current_route_trips'] = []
+
+        # Planned route geometry & stops:
+        # Strict revision coherence: geometry and stops must be sourced consistently
+        # from the active journey's locked route revision.
+        # If geometry or stops snapshot is missing from the locked revision, do NOT fall back
+        # to mutable route stops or newer revisions.
+        route_geom = None
+        route_stops = []
+        active_journey = bus.journeys.filter(status='active').select_related('route_revision').first()
+        if active_journey:
+            if active_journey.route_revision:
+                locked_rev = active_journey.route_revision
+                route_geom = locked_rev.geometry
+                if locked_rev.metadata and 'stops_snapshot' in locked_rev.metadata:
+                    route_stops = locked_rev.metadata['stops_snapshot']
+                # If stops_snapshot is missing, do NOT substitute mutable route stops!
+                # Planned stops remain empty/unavailable for integrity.
+            # If active journey has no route_revision, leave route_geom=None, route_stops=[]
+        elif bus.current_route:
+            # Safe route fallback when no active journey is running
+            active_rev = bus.current_route.active_revision
+            if active_rev:
+                route_geom = active_rev.geometry
+                if active_rev.metadata and 'stops_snapshot' in active_rev.metadata:
+                    route_stops = active_rev.metadata['stops_snapshot']
+                else:
+                    from schedules.serializers import StopSerializer
+                    route_stops = StopSerializer(bus.current_route.stops.order_by('order'), many=True).data
+            else:
+                from schedules.serializers import StopSerializer
+                route_stops = StopSerializer(bus.current_route.stops.order_by('order'), many=True).data
+
+        data['planned_route_geometry'] = route_geom
+        data['planned_route_stops'] = route_stops
+
         return Response(data)
 
     if not request.user.is_admin_user:

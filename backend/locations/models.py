@@ -68,7 +68,7 @@ class DriverLocation(models.Model):
             is_sharing=True,
             last_updated__gte=threshold,
             journey__status='active'
-        ).select_related('driver', 'journey__bus', 'journey__route')
+        ).exclude(latitude=0, longitude=0).select_related('driver', 'journey__bus', 'journey__route')
 
     @classmethod
     def expire_inactive(cls):

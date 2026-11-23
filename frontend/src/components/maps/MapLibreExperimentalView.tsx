@@ -7,6 +7,11 @@ import {
   leafletToMapLibreCoords,
   normalizeBearing,
 } from '@/lib/maplibreUtils';
+import {
+  PILOT_MAP_STYLE_URL,
+  PILOT_MAP_BRIGHT_STYLE_URL,
+  PILOT_MAP_FALLBACK_STYLE_URL,
+} from '@/lib/mapConfig';
 
 interface Props {
   busLocation: {
@@ -52,14 +57,14 @@ const OSM_RASTER_STYLE: maplibregl.StyleSpecification = {
 function getStyleSpecification(styleId: string): string | maplibregl.StyleSpecification {
   switch (styleId) {
     case 'openfreemap-bright':
-      return 'https://tiles.openfreemap.org/styles/bright';
+      return PILOT_MAP_BRIGHT_STYLE_URL;
     case 'demotiles':
-      return 'https://demotiles.maplibre.org/style.json';
+      return PILOT_MAP_FALLBACK_STYLE_URL;
     case 'osm-raster':
       return OSM_RASTER_STYLE;
     case 'openfreemap-liberty':
     default:
-      return 'https://tiles.openfreemap.org/styles/liberty';
+      return PILOT_MAP_STYLE_URL;
   }
 }
 

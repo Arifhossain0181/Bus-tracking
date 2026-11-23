@@ -1,3 +1,4 @@
+from decimal import Decimal, InvalidOperation
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Q
@@ -36,7 +37,14 @@ def _save_route_builder(route, data, user=None):
     if 'color' in data and data.get('color'):
         route.color = data['color']
     if 'total_distance_km' in data:
-        route.total_distance_km = data['total_distance_km'] or None
+        raw_dist = data.get('total_distance_km')
+        if raw_dist not in (None, '', 0):
+            try:
+                route.total_distance_km = Decimal(str(round(float(raw_dist), 2)))
+            except (ValueError, TypeError, InvalidOperation):
+                route.total_distance_km = None
+        else:
+            route.total_distance_km = None
     if 'estimated_duration_mins' in data:
         route.estimated_duration_mins = data['estimated_duration_mins'] or None
     if 'is_active' in data:
@@ -134,10 +142,18 @@ def _save_route_builder(route, data, user=None):
         from .geometry import validate_geojson_linestring
         is_valid, _ = validate_geojson_linestring(geometry)
         if is_valid:
+            raw_rev_dist = data.get('distance_km') or route.total_distance_km
+            rev_dist = None
+            if raw_rev_dist not in (None, '', 0):
+                try:
+                    rev_dist = Decimal(str(round(float(raw_rev_dist), 2)))
+                except (ValueError, TypeError, InvalidOperation):
+                    rev_dist = None
+
             rev = RouteRevision.objects.create(
                 route=route,
                 geometry=geometry,
-                distance_km=data.get('distance_km') or route.total_distance_km,
+                distance_km=rev_dist,
                 duration_mins=data.get('estimated_duration_mins') or route.estimated_duration_mins,
                 change_summary=data.get('change_summary') or 'Route geometry configured',
                 created_by=user if user and user.is_authenticated else None,
@@ -187,17 +203,21 @@ def route_list_api(request):
     if not name:
         return Response({'error': 'Route name is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    with transaction.atomic():
-        route = Route(
-            name=name,
-            route_type=request.data.get('route_type', 'shuttle'),
-            color=request.data.get('color') or ('#0d6efd' if request.data.get('route_type') == 'long' else '#ffc107'),
-            is_active=True,
-            is_published=bool(request.data.get('is_published', True)),
-        )
-        _save_route_builder(route, request.data, user=request.user)
+    try:
+        with transaction.atomic():
+            route = Route(
+                name=name,
+                route_type=request.data.get('route_type', 'shuttle'),
+                color=request.data.get('color') or ('#0d6efd' if request.data.get('route_type') == 'long' else '#ffc107'),
+                is_active=True,
+                is_published=bool(request.data.get('is_published', True)),
+            )
+            _save_route_builder(route, request.data, user=request.user)
 
-    return Response(RouteSerializer(route).data, status=status.HTTP_201_CREATED)
+        return Response(RouteSerializer(route).data, status=status.HTTP_201_CREATED)
+    except DjangoValidationError as e:
+        msg = e.message_dict if hasattr(e, 'message_dict') else str(e)
+        return Response({'error': msg}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['GET', 'PATCH', 'PUT', 'DELETE'])
@@ -220,11 +240,15 @@ def route_detail_api(request, pk):
         route.delete()
         return Response({'status': 'Route deleted successfully.'})
 
-    with transaction.atomic():
-        _save_route_builder(route, request.data, user=request.user)
+    try:
+        with transaction.atomic():
+            _save_route_builder(route, request.data, user=request.user)
 
-    route.refresh_from_db()
-    return Response(RouteSerializer(route).data)
+        route.refresh_from_db()
+        return Response(RouteSerializer(route).data)
+    except DjangoValidationError as e:
+        msg = e.message_dict if hasattr(e, 'message_dict') else str(e)
+        return Response({'error': msg}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['POST'])

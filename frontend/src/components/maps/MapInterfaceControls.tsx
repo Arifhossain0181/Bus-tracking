@@ -13,8 +13,9 @@ import {
   Plus,
   RadioTower,
 } from 'lucide-react';
+import { SATELLITE_IMAGERY_ENABLED } from '@/lib/mapConfig';
 
-export type MapLayerPreset = 'satellite' | 'mapbox-satellite' | 'voyager' | 'dark';
+export type MapLayerPreset = 'liberty' | 'bright' | 'dark' | 'satellite' | 'mapbox-satellite' | 'voyager';
 
 export interface MapInterfaceControlsProps {
   selectedBusNumber?: string;
@@ -139,51 +140,53 @@ export default function MapInterfaceControls({
               <button
                 type="button"
                 onClick={() => {
-                  onSelectLayer('satellite');
+                  onSelectLayer('liberty');
                   setShowLayerMenu(false);
                 }}
                 className={`w-full text-left px-3 py-2 hover:bg-white/10 flex items-center justify-between rounded-xl transition ${
-                  activeLayer === 'satellite' ? 'text-cyan-400 font-bold bg-white/5' : ''
+                  activeLayer === 'liberty' || activeLayer === 'satellite' ? 'text-cyan-400 font-bold bg-white/5' : ''
                 }`}
               >
                 <div className="flex flex-col">
-                  <span className="font-bold">Google Satellite HD</span>
-                  <span className="text-[10px] text-cyan-300">Ultra-Clear Aerial + Roads</span>
+                  <span className="font-bold">OpenFreeMap Liberty</span>
+                  <span className="text-[10px] text-cyan-300">Default Pilot Vector Basemap</span>
                 </div>
-                {activeLayer === 'satellite' && <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0" />}
+                {(activeLayer === 'liberty' || activeLayer === 'satellite') && <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0" />}
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  onSelectLayer('mapbox-satellite');
+                  onSelectLayer('bright');
                   setShowLayerMenu(false);
                 }}
                 className={`w-full text-left px-3 py-2 hover:bg-white/10 flex items-center justify-between rounded-xl transition ${
-                  activeLayer === 'mapbox-satellite' ? 'text-cyan-400 font-bold bg-white/5' : ''
+                  activeLayer === 'bright' ? 'text-cyan-400 font-bold bg-white/5' : ''
                 }`}
               >
                 <div className="flex flex-col">
-                  <span className="font-bold">Esri World Imagery 3D</span>
-                  <span className="text-[10px] text-slate-400">Pure GIS Photography</span>
+                  <span className="font-bold">OpenFreeMap Bright</span>
+                  <span className="text-[10px] text-slate-400">High-Contrast Street Map</span>
                 </div>
-                {activeLayer === 'mapbox-satellite' && <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0" />}
+                {activeLayer === 'bright' && <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0" />}
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onSelectLayer('voyager');
-                  setShowLayerMenu(false);
-                }}
-                className={`w-full text-left px-3 py-2 hover:bg-white/10 flex items-center justify-between rounded-xl transition ${
-                  activeLayer === 'voyager' ? 'text-cyan-400 font-bold bg-white/5' : ''
-                }`}
-              >
-                <div className="flex flex-col">
-                  <span className="font-bold">Voyager 3D</span>
-                  <span className="text-[10px] text-slate-400">Clean Vector Street Map</span>
-                </div>
-                {activeLayer === 'voyager' && <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0" />}
-              </button>
+              {SATELLITE_IMAGERY_ENABLED && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSelectLayer('mapbox-satellite');
+                    setShowLayerMenu(false);
+                  }}
+                  className={`w-full text-left px-3 py-2 hover:bg-white/10 flex items-center justify-between rounded-xl transition ${
+                    activeLayer === 'mapbox-satellite' ? 'text-cyan-400 font-bold bg-white/5' : ''
+                  }`}
+                >
+                  <div className="flex flex-col">
+                    <span className="font-bold">Esri World Imagery</span>
+                    <span className="text-[10px] text-slate-400">Photographic Aerial (Esri)</span>
+                  </div>
+                  {activeLayer === 'mapbox-satellite' && <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0" />}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -195,7 +198,7 @@ export default function MapInterfaceControls({
                 }`}
               >
                 <div className="flex flex-col">
-                  <span className="font-bold">Dark Neon 3D</span>
+                  <span className="font-bold">Dark Neon</span>
                   <span className="text-[10px] text-slate-400">Night Cyberpunk Mode</span>
                 </div>
                 {activeLayer === 'dark' && <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0" />}

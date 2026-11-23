@@ -19,7 +19,7 @@ export interface BusPopupData {
   latitude: number;
   longitude: number;
   routeName?: string;
-  status: 'moving' | 'stopped' | 'offline';
+  status: 'live' | 'moving' | 'stopped' | 'stale' | 'offline';
   lastUpdated: string;
 }
 
@@ -37,14 +37,18 @@ export default function BusMarkerPopup({
   isFollowing = false,
 }: BusMarkerPopupProps) {
   const statusColors = {
+    live: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
     moving: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
     stopped: 'bg-amber-500/20 text-amber-400 border-amber-500/40',
+    stale: 'bg-amber-500/20 text-amber-400 border-amber-500/40',
     offline: 'bg-slate-500/20 text-slate-400 border-slate-500/40',
   };
 
   const statusLabels = {
+    live: 'LIVE',
     moving: 'MOVING',
     stopped: 'STOPPED',
+    stale: 'STALE',
     offline: 'OFFLINE',
   };
 

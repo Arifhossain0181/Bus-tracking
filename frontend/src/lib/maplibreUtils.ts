@@ -111,6 +111,12 @@ export function interpolatePositionOnRoute(
   return { lat, lng, heading, speed };
 }
 
+import {
+  PILOT_MAP_STYLE_URL,
+  PILOT_MAP_BRIGHT_STYLE_URL,
+  PILOT_MAP_FALLBACK_STYLE_URL,
+} from './mapConfig.ts';
+
 /**
  * Map style choices available for MapLibre prototype.
  */
@@ -119,21 +125,21 @@ export const MAP_STYLES = [
     id: 'openfreemap-liberty',
     name: 'OpenFreeMap Liberty (Vector + 3D)',
     description: 'Free open-source vector tiles supporting 3D extruded buildings (no API key)',
-    url: 'https://tiles.openfreemap.org/styles/liberty',
+    url: PILOT_MAP_STYLE_URL,
     supports3DBuildings: true,
   },
   {
     id: 'openfreemap-bright',
     name: 'OpenFreeMap Bright (Vector)',
     description: 'High-contrast vector map with street-level detail',
-    url: 'https://tiles.openfreemap.org/styles/bright',
+    url: PILOT_MAP_BRIGHT_STYLE_URL,
     supports3DBuildings: true,
   },
   {
     id: 'demotiles',
     name: 'MapLibre DemoTiles (Vector)',
     description: 'Official MapLibre demo vector style',
-    url: 'https://demotiles.maplibre.org/style.json',
+    url: PILOT_MAP_FALLBACK_STYLE_URL,
     supports3DBuildings: false,
   },
   {

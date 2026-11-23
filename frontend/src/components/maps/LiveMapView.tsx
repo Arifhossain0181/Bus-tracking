@@ -2,6 +2,7 @@
 
 import React, { useMemo } from 'react';
 import type { ActiveDriverLocation, Bus } from '@/lib/types';
+import { isValidCoordinate, calculateLocationAgeSeconds, GPS_FRESHNESS_THRESHOLDS } from '@/lib/trackingStatus';
 import BusGisMap from './BusGisMap';
 import type { ActiveBusData } from '@/lib/map3d/threeMapLayer';
 import type { StopInfo } from '@/lib/map3d/routeGeometry';
@@ -10,6 +11,7 @@ interface Props {
   drivers: ActiveDriverLocation[];
   busesList?: Bus[];
   routePath?: [number, number][];
+  roadGeometry?: [number, number][];
   stops?: StopInfo[];
   routeName?: string;
   originName?: string;
@@ -25,6 +27,7 @@ export default function LiveMapView({
   drivers,
   busesList = [],
   routePath,
+  roadGeometry,
   stops = [],
   routeName = 'IUBAT - Abdullahpur - Airport Express',
   originName = 'IUBAT Permanent Campus',
@@ -42,77 +45,94 @@ export default function LiveMapView({
 
     // 1. Live telemetry drivers (Highest Priority)
     drivers.forEach((d) => {
+      const lat = Number(d.latitude);
+      const lng = Number(d.longitude);
+      if (!isValidCoordinate(lat, lng)) {
+        return; // Reject invalid or (0,0) driver coordinates
+      }
+
       const bNum = d.bus_number ? `Bus #${d.bus_number}` : `Bus #${d.driver_id}`;
       activeBusNumbers.add(d.bus_number || String(d.driver_id));
+      const rawSpeed = d.speed != null ? Number(d.speed) : null;
+      const ageSec = calculateLocationAgeSeconds(d.last_updated);
+
+      // GPS Freshness vs Movement State:
+      // 1. If GPS is stale (> 30s) but <= 120s: status is 'stale' (never falsely live even if speed > 0)
+      // 2. If GPS is older than 120s: status is 'offline'
+      // 3. If GPS is fresh (<= 30s):
+      //    - If speed is measured positive (>1 m/s): 'moving'
+      //    - If speed is measured zero (<=1 m/s): 'stopped'
+      //    - If speed is unavailable: 'live'
+      let driverStatus: ActiveBusData['status'];
+      if (ageSec != null && ageSec > GPS_FRESHNESS_THRESHOLDS.STALE_MAX_SECONDS) {
+        driverStatus = 'offline';
+      } else if (ageSec != null && ageSec > GPS_FRESHNESS_THRESHOLDS.LIVE_MAX_SECONDS) {
+        driverStatus = 'stale';
+      } else if (rawSpeed != null) {
+        driverStatus = rawSpeed > 1 ? 'moving' : 'stopped';
+      } else {
+        driverStatus = 'live';
+      }
+
       list.push({
         id: d.driver_id,
         busNumber: bNum,
-        routeName: d.route_name || 'IUBAT - Campus Express',
+        routeName: d.route_name || 'IUBAT Transit Line',
         driverName: d.driver_name,
-        speed: d.speed != null ? d.speed : 0,
+        speed: rawSpeed,
         heading: d.heading != null ? d.heading : 165,
-        latitude: Number(d.latitude),
-        longitude: Number(d.longitude),
+        latitude: lat,
+        longitude: lng,
         lastUpdated: d.last_updated,
         accentColor: followingDriverId === d.driver_id ? '#00e5ff' : '#10b981',
-        status: d.speed != null && d.speed > 1 ? 'moving' : 'stopped',
+        status: driverStatus,
       });
     });
 
-    // 2. Add fleet buses that aren't actively streaming telemetry
+    // 2. Add fleet buses that aren't actively streaming telemetry (only if they have verified coordinates)
     (busesList || []).forEach((b) => {
       if (activeBusNumbers.has(b.bus_number) || activeBusNumbers.has(String(b.id))) {
         return;
       }
       const loc = b.latest_location;
-      // Default to IUBAT Permanent Campus if location record is missing
-      const lat = loc?.latitude ? Number(loc.latitude) : 23.8878;
-      const lng = loc?.longitude ? Number(loc.longitude) : 90.3896;
+      // Do NOT fabricate fallback campus coordinates. Only place buses with genuine, valid coordinates.
+      if (!loc || !isValidCoordinate(loc.latitude, loc.longitude)) {
+        return;
+      }
+      const lat = Number(loc.latitude);
+      const lng = Number(loc.longitude);
+      const rawFleetSpeed = loc?.speed != null ? Number(loc.speed) : null;
+      const fleetTimestamp = loc?.timestamp || b.updated_at;
+      const fleetAgeSec = calculateLocationAgeSeconds(fleetTimestamp);
+
+      let fleetStatus: ActiveBusData['status'];
+      if (!b.is_active || (fleetAgeSec != null && fleetAgeSec > GPS_FRESHNESS_THRESHOLDS.STALE_MAX_SECONDS)) {
+        fleetStatus = 'offline';
+      } else if (fleetAgeSec != null && fleetAgeSec > GPS_FRESHNESS_THRESHOLDS.LIVE_MAX_SECONDS) {
+        fleetStatus = 'stale';
+      } else if (rawFleetSpeed != null) {
+        fleetStatus = rawFleetSpeed > 1 ? 'moving' : 'stopped';
+      } else {
+        fleetStatus = 'live';
+      }
+
       list.push({
         id: b.id + 10000,
         busNumber: `Bus #${b.bus_number}`,
         routeName: b.route_name || 'IUBAT Transit Line',
         driverName: b.active_assignment?.driver_name || 'Assigned Driver',
-        speed: loc?.speed ? Number(loc.speed) : 0,
+        speed: rawFleetSpeed,
         heading: loc?.heading ? Number(loc.heading) : 165,
         latitude: lat,
         longitude: lng,
         lastUpdated: loc?.timestamp || b.updated_at,
         accentColor: '#00e5ff',
-        status: b.is_active ? 'stopped' : 'offline',
+        status: fleetStatus,
         licensePlate: b.license_plate,
       });
     });
 
-    // 3. Realistic IUBAT Campus buses if backend had 0 telemetry and 0 fleet records
-    if (list.length === 0) {
-      list.push({
-        id: 1,
-        busNumber: 'Bus #UB-001',
-        routeName: 'IUBAT - Campus Express',
-        driverName: 'Mohammad Rahim',
-        speed: 8.5, // ~31 km/h
-        heading: 165,
-        latitude: 23.8878, // IUBAT Permanent Campus
-        longitude: 90.3896,
-        accentColor: '#00e5ff',
-        status: 'moving',
-        lastUpdated: new Date().toISOString(),
-      });
-      list.push({
-        id: 2,
-        busNumber: 'Bus #UB-002',
-        routeName: 'IUBAT - Airport Link',
-        driverName: 'Abul Kalam',
-        speed: 0,
-        heading: 160,
-        latitude: 23.8845, // Sector 10 Embankment Road
-        longitude: 90.3910,
-        accentColor: '#10b981',
-        status: 'stopped',
-        lastUpdated: new Date().toISOString(),
-      });
-    }
+    // Note: Fabricated demo buses (UB-001/UB-002) have been permanently removed from production map.
 
     return list;
   }, [drivers, busesList, followingDriverId]);
@@ -121,6 +141,7 @@ export default function LiveMapView({
     <BusGisMap
       buses={buses}
       routePath={routePath}
+      roadGeometry={roadGeometry}
       stops={stops}
       routeName={routeName}
       originName={originName}

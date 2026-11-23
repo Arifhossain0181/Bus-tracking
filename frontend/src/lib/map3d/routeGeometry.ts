@@ -180,14 +180,17 @@ export function getNextUpcomingStop(
 }
 
 /**
- * In-memory cache for OSRM fetched road geometries to prevent redundant network calls.
- */
-const roadGeometryCache = new Map<string, [number, number][]>();
-
-/**
- * Fetches real Bangladesh road network polyline geometry connecting the stops using OSRM.
- * This guarantees the path strictly hugs the actual asphalt roads, flyovers, and avenues,
- * completely avoiding passing through buildings.
+ * Resolves fallback route coordinates when backend-planned road geometry is not available.
+ *
+ * CRITICAL ROUTE GEOMETRY INTEGRITY RULE:
+ * In accordance with Task 022/022.1 pilot standardization, direct browser-side calls to
+ * public demo routing endpoints (router.project-osrm.org) have been completely eliminated.
+ * True road geometry is generated strictly server-side via schedules.routing.providers and
+ * delivered to the client via RouteRevision snapshots or plannedRouteGeometry props.
+ *
+ * Coordinates returned by this fallback are purely SCHEMATIC straight lines connecting stops.
+ * They must NEVER be misrepresented as true road-snapped geometry, must NOT snap vehicle GPS
+ * positions off their genuine telemetry coordinates, and cannot silently overwrite accepted road routes.
  */
 export async function fetchRoadRouteGeometry(
   stops: StopInfo[]
@@ -196,38 +199,8 @@ export async function fetchRoadRouteGeometry(
     return stops.map((s) => [s.longitude, s.latitude]);
   }
 
-  // Create cache key from stop coordinates
-  const cacheKey = stops
-    .map((s) => `${s.longitude.toFixed(4)},${s.latitude.toFixed(4)}`)
-    .join(';');
-
-  if (roadGeometryCache.has(cacheKey)) {
-    return roadGeometryCache.get(cacheKey)!;
-  }
-
-  try {
-    const coordsStr = stops
-      .map((s) => `${s.longitude},${s.latitude}`)
-      .join(';');
-    const url = `https://router.project-osrm.org/route/v1/driving/${coordsStr}?overview=full&geometries=geojson`;
-
-    const res = await fetch(url, {
-      headers: { Accept: 'application/json' },
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      const coords = data?.routes?.[0]?.geometry?.coordinates as [number, number][] | undefined;
-      if (Array.isArray(coords) && coords.length >= 2) {
-        roadGeometryCache.set(cacheKey, coords);
-        return coords;
-      }
-    }
-  } catch {
-    // network failure fallback
-  }
-
-  // Fallback to straight line stops if OSRM is unreachable
+  // Safe client fallback: return stops polyline without issuing external network requests.
+  // True road geometry is supplied via roadGeometry or routePath props from backend API.
   return stops.map((s) => [s.longitude, s.latitude]);
 }
 

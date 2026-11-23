@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import { Check, MapPin, Navigation, X } from 'lucide-react';
+import { ADMIN_MAP_TILE_URL, ADMIN_MAP_ATTRIBUTION } from '@/lib/mapConfig';
 
 interface Props {
   isOpen: boolean;
@@ -60,8 +61,8 @@ export default function StopLocationPickerModal({
     const zoom = initialLat != null && initialLng != null ? 15 : 13;
 
     const map = L.map(containerRef.current).setView(center, zoom);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
+    L.tileLayer(ADMIN_MAP_TILE_URL, {
+      attribution: ADMIN_MAP_ATTRIBUTION,
       maxZoom: 19,
     }).addTo(map);
 

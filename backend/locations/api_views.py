@@ -159,30 +159,22 @@ def start_journey(request):
         )
         
         # Create/update driver location with journey reference
-        defaults = {
-            'is_sharing': True,
-            'session_started': timezone.now(),
-            'journey': journey,
-        }
         if dec_lat is not None and dec_lon is not None:
-            defaults['latitude'] = dec_lat
-            defaults['longitude'] = dec_lon
-            defaults['accuracy'] = acc_val
-            defaults['speed'] = spd_val
-            defaults['heading'] = hdg_val
-        else:
-            existing_loc = DriverLocation.objects.filter(driver=request.user).first()
-            if not existing_loc:
-                defaults['latitude'] = Decimal('0')
-                defaults['longitude'] = Decimal('0')
-
-        location, created = DriverLocation.objects.update_or_create(
-            driver=request.user,
-            defaults=defaults
-        )
-
-        # If coordinates provided, record to history and sync initial BusLocation
-        if dec_lat is not None and dec_lon is not None:
+            defaults = {
+                'is_sharing': True,
+                'session_started': timezone.now(),
+                'journey': journey,
+                'latitude': dec_lat,
+                'longitude': dec_lon,
+                'accuracy': acc_val,
+                'speed': spd_val,
+                'heading': hdg_val,
+            }
+            location, created = DriverLocation.objects.update_or_create(
+                driver=request.user,
+                defaults=defaults
+            )
+            # If valid coordinates provided, record to history and sync initial BusLocation
             LocationHistory.objects.create(
                 driver=request.user,
                 latitude=dec_lat,
@@ -201,6 +193,16 @@ def start_journey(request):
             if assignment.route and assignment.bus.current_route_id != assignment.route_id:
                 assignment.bus.current_route = assignment.route
                 assignment.bus.save(update_fields=['current_route'])
+        else:
+            # Safe design: Journey starts, but location-sharing remains inactive
+            # until the first verified GPS fix is received via record_driver_gps.
+            existing_loc = DriverLocation.objects.filter(driver=request.user).first()
+            if existing_loc:
+                existing_loc.journey = journey
+                existing_loc.is_sharing = False
+                existing_loc.session_started = timezone.now()
+                existing_loc.save(update_fields=['journey', 'is_sharing', 'session_started'])
+            # Never create or publish fake (0, 0) coordinates or use campus fallback.
         
         # Create notification for journey start
         Notification.create_journey_notification(journey, 'journey_start', request.user)
@@ -413,6 +415,8 @@ def get_active_locations(request):
     
     result = []
     for loc in active_locations:
+        if loc.latitude == Decimal('0') and loc.longitude == Decimal('0'):
+            continue
         data = {
             'driver_id': loc.driver.id,
             'driver_name': loc.driver.get_full_name() or loc.driver.username,

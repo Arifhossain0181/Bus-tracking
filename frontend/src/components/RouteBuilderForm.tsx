@@ -691,7 +691,7 @@ export function RouteBuilderForm({ existing }: { existing?: RouteItem }) {
       }
       geometryPayload = {
         geometry: savePlan.payload.geometry,
-        total_distance_km: savePlan.payload.distance_km,
+        total_distance_km: savePlan.payload.distance_km != null ? Number(Number(savePlan.payload.distance_km).toFixed(2)) : undefined,
         estimated_duration_mins: savePlan.payload.duration_mins,
         metadata: savePlan.payload.metadata,
         change_summary: savePlan.payload.change_summary,
@@ -701,7 +701,7 @@ export function RouteBuilderForm({ existing }: { existing?: RouteItem }) {
       if (lineGeo) {
         geometryPayload = {
           geometry: lineGeo,
-          total_distance_km: distanceKm,
+          total_distance_km: distanceKm != null ? Number(Number(distanceKm).toFixed(2)) : undefined,
           estimated_duration_mins: schematicDurationMins,
           metadata: {
             mode: 'schematic',

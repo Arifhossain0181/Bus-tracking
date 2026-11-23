@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
 import type { EditorPoint, GeoJsonLineString } from '@/lib/routeGeometry.ts';
 import type { Stop } from '@/lib/types.ts';
+import { ADMIN_MAP_TILE_URL, ADMIN_MAP_ATTRIBUTION } from '@/lib/mapConfig';
 import { Maximize2 } from 'lucide-react';
 
 interface VisualRouteEditorMapProps {
@@ -56,8 +57,8 @@ export default function VisualRouteEditorMap({
       attributionControl: true,
     }).setView(DEFAULT_CENTER, 14);
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
+    L.tileLayer(ADMIN_MAP_TILE_URL, {
+      attribution: ADMIN_MAP_ATTRIBUTION,
       maxZoom: 19,
     }).addTo(map);
 

@@ -18,7 +18,7 @@ export interface ActiveBusData {
   longitude: number;
   lastUpdated?: string;
   accentColor?: string;
-  status?: 'moving' | 'stopped' | 'offline';
+  status?: 'live' | 'moving' | 'stopped' | 'stale' | 'offline';
   licensePlate?: string;
 }
 

@@ -182,6 +182,19 @@ export default function FollowBusPage() {
     ? formatEtaDescription(latestEta.remaining_minutes, latestEta.is_delayed, latestEta.delay_minutes)
     : null;
 
+  // Convert planned route stops to StopInfo[]
+  const followStops = useMemo(() => {
+    if (!bus?.planned_route_stops || bus.planned_route_stops.length === 0) return [];
+    return bus.planned_route_stops.map((s, idx) => ({
+      id: s.id,
+      name: s.name,
+      latitude: Number(s.latitude),
+      longitude: Number(s.longitude),
+      order: s.order || idx + 1,
+      isMajor: s.is_major_stop,
+    }));
+  }, [bus?.planned_route_stops]);
+
   return (
     <div className="space-y-4 max-w-7xl mx-auto pb-8 px-2 sm:px-4">
       {/* Network Alert Banner */}
@@ -317,6 +330,8 @@ export default function FollowBusPage() {
         longitude={latestLocation ? Number(latestLocation.longitude) : null}
         busNumber={bus?.bus_number || 'BUS'}
         trail={trail}
+        plannedRouteGeometry={bus?.planned_route_geometry?.coordinates || null}
+        stops={followStops}
         heading={headingDeg}
         speed={rawSpeed}
         isAccurate={statusInfo.isAccurate}

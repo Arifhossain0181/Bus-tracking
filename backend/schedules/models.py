@@ -73,6 +73,15 @@ class Route(models.Model):
         return self.route_type in ['shuttle', 'metro']
 
     def clean(self):
+        from decimal import Decimal, InvalidOperation
+        if self.total_distance_km is not None and not isinstance(self.total_distance_km, Decimal):
+            try:
+                self.total_distance_km = Decimal(str(round(float(self.total_distance_km), 2)))
+            except (ValueError, TypeError, InvalidOperation):
+                self.total_distance_km = None
+        elif self.total_distance_km is not None:
+            self.total_distance_km = round(self.total_distance_km, 2)
+
         super().clean()
         from django.core.exceptions import ValidationError
         if self.active_revision_id:
@@ -82,6 +91,15 @@ class Route(models.Model):
                 raise ValidationError({'active_revision': 'Only published revisions can be set as the active revision.'})
 
     def save(self, *args, **kwargs):
+        from decimal import Decimal, InvalidOperation
+        if self.total_distance_km is not None and not isinstance(self.total_distance_km, Decimal):
+            try:
+                self.total_distance_km = Decimal(str(round(float(self.total_distance_km), 2)))
+            except (ValueError, TypeError, InvalidOperation):
+                self.total_distance_km = None
+        elif self.total_distance_km is not None:
+            self.total_distance_km = round(self.total_distance_km, 2)
+
         self.full_clean()
         super().save(*args, **kwargs)
 

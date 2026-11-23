@@ -120,6 +120,11 @@ export interface Bus {
   recent_locations?: BusLocation[];
   recent_assignments?: BusAssignment[];
   current_route_trips?: BusTripSummary[];
+  planned_route_geometry?: {
+    type: 'LineString';
+    coordinates: [number, number][];
+  } | null;
+  planned_route_stops?: Stop[];
   created_at?: string;
   updated_at?: string;
 }

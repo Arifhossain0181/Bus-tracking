@@ -18,11 +18,11 @@ export interface FloatingBusHUDProps {
   routeName?: string;
   origin?: string;
   destination?: string;
-  speedKmh: number;
+  speedKmh?: number | null;
   currentLocationName?: string;
   nextStopName?: string;
-  distanceToNextKm?: number;
-  etaMinutes?: number;
+  distanceToNextKm?: number | null;
+  etaMinutes?: number | null;
   routeProgressPercent: number;
   lastUpdatedFormatted: string;
   isConnected: boolean;
@@ -33,18 +33,18 @@ export interface FloatingBusHUDProps {
 
 export default function FloatingBusHUD({
   busNumber,
-  routeName = 'IUBAT - Campus Express',
-  origin = 'IUBAT Permanent Campus',
-  destination = 'Kuril Interchange',
-  speedKmh = 0,
-  currentLocationName = 'IUBAT Permanent Campus',
-  nextStopName = 'Abdullahpur Station',
-  distanceToNextKm = 0,
-  etaMinutes = 0,
-  routeProgressPercent = 50,
+  routeName = 'Transit Line',
+  origin = 'Campus',
+  destination = 'Destination',
+  speedKmh = null,
+  currentLocationName,
+  nextStopName,
+  distanceToNextKm = null,
+  etaMinutes = null,
+  routeProgressPercent = 0,
   lastUpdatedFormatted = 'Just now',
-  isConnected = true,
-  statusText = 'LIVE GPS LOCKED',
+  isConnected = false,
+  statusText = 'OFFLINE',
   isFollowing = false,
   onToggleFollow,
 }: FloatingBusHUDProps) {
@@ -138,9 +138,11 @@ export default function FloatingBusHUD({
                 </div>
                 <div className="mt-1 flex items-baseline gap-1">
                   <span className="text-xl md:text-2xl font-black text-white tracking-tight">
-                    {speedKmh}
+                    {speedKmh != null ? speedKmh : '—'}
                   </span>
-                  <span className="text-xs font-semibold text-slate-400">km/h</span>
+                  {speedKmh != null && (
+                    <span className="text-xs font-semibold text-slate-400">km/h</span>
+                  )}
                 </div>
               </div>
 
@@ -173,9 +175,17 @@ export default function FloatingBusHUD({
                 </div>
                 <div className="mt-1 flex items-baseline gap-1">
                   <span className="text-xl md:text-2xl font-black text-white tracking-tight">
-                    {distanceToNextKm > 0 ? distanceToNextKm : '0.5'}
+                    {distanceToNextKm != null
+                      ? distanceToNextKm === 0
+                        ? '0'
+                        : distanceToNextKm.toFixed(1)
+                      : '—'}
                   </span>
-                  <span className="text-xs font-semibold text-slate-400">km away</span>
+                  {distanceToNextKm != null && (
+                    <span className="text-xs font-semibold text-slate-400">
+                      {distanceToNextKm === 0 ? 'At stop' : 'km away'}
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -187,9 +197,17 @@ export default function FloatingBusHUD({
                 </div>
                 <div className="mt-1 flex items-baseline gap-1">
                   <span className="text-xl md:text-2xl font-black text-amber-300 tracking-tight">
-                    {etaMinutes > 0 ? etaMinutes : '4'}
+                    {etaMinutes != null
+                      ? etaMinutes === 0
+                        ? 'Due'
+                        : `${etaMinutes}`
+                      : 'Calculating…'}
                   </span>
-                  <span className="text-xs font-semibold text-slate-400">minutes</span>
+                  {etaMinutes != null && etaMinutes > 0 && (
+                    <span className="text-xs font-semibold text-slate-400">
+                      {etaMinutes === 1 ? 'minute' : 'minutes'}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>

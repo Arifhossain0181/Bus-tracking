@@ -545,3 +545,291 @@ class UnifiedTrackingPipelineTests(TestCase):
         self.assertEqual(float(bus_entry.get('heading')), 225.0)
         self.assertTrue(bus_entry.get('is_accurate'))
         self.assertIsNotNone(bus_entry.get('timestamp'))
+
+    # 20. Task 020.1: start_journey without coordinates does not inject Null Island (0,0) and stays unshared
+    def test_start_journey_without_coordinates_does_not_inject_null_island(self):
+        self.client.force_authenticate(user=self.driver2)
+        res = self.client.post('/api/locations/journey/start/', {}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data['status'], 'success')
+
+        journey = Journey.objects.get(id=res.data['journey_id'])
+        self.assertIsNone(journey.start_latitude)
+        self.assertIsNone(journey.start_longitude)
+
+        # Confirm no DriverLocation with (0,0) exists
+        self.assertFalse(DriverLocation.objects.filter(driver=self.driver2, latitude=0, longitude=0).exists())
+
+        # Driver should NOT appear in active locations because location sharing is inactive until valid GPS fix
+        self.client.force_authenticate(user=self.student)
+        active_res = self.client.get('/api/locations/location/active/')
+        self.assertEqual(active_res.status_code, status.HTTP_200_OK)
+        active_driver_ids = [d['driver_id'] for d in active_res.data]
+        self.assertNotIn(self.driver2.id, active_driver_ids)
+
+    # 21. Task 020.1: start_journey rejects explicit (0,0) and malformed coordinates
+    def test_start_journey_rejects_explicit_null_island_and_malformed(self):
+        self.client.force_authenticate(user=self.driver2)
+
+        # Explicit (0, 0) Null Island
+        res_zero = self.client.post('/api/locations/journey/start/', {
+            'latitude': 0,
+            'longitude': 0,
+        }, format='json')
+        self.assertEqual(res_zero.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Null Island', res_zero.data.get('error', ''))
+
+        # Missing longitude
+        res_partial = self.client.post('/api/locations/journey/start/', {
+            'latitude': 23.8103,
+        }, format='json')
+        self.assertEqual(res_partial.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # Out-of-bounds latitude
+        res_oob = self.client.post('/api/locations/journey/start/', {
+            'latitude': 105.0,
+            'longitude': 90.0,
+        }, format='json')
+        self.assertEqual(res_oob.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # 22. Task 020.1 & 020.2: bus_detail_api exposes locked route revision geometry and consistent stops
+    def test_bus_detail_api_exposes_planned_route_geometry_and_stops(self):
+        self.client.force_authenticate(user=self.student)
+        res = self.client.get(f'/api/buses/{self.bus1.id}/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIn('planned_route_geometry', res.data)
+        self.assertIn('planned_route_stops', res.data)
+
+    # 23. Task 020.2: Journey start strict GPS validation suite (NaN, infinity, out-of-bounds, single coordinate, legitimate fix)
+    def test_start_journey_strict_gps_validation_suite(self):
+        self.client.force_authenticate(user=self.driver2)
+
+        # 1. Null coordinate when key is present
+        res_null = self.client.post('/api/locations/journey/start/', {
+            'latitude': None,
+            'longitude': 90.4125,
+        }, format='json')
+        self.assertEqual(res_null.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Both latitude and longitude', res_null.data.get('error', ''))
+
+        # 2. Only latitude supplied
+        res_lat_only = self.client.post('/api/locations/journey/start/', {
+            'latitude': 23.8103,
+        }, format='json')
+        self.assertEqual(res_lat_only.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 3. Only longitude supplied
+        res_lon_only = self.client.post('/api/locations/journey/start/', {
+            'longitude': 90.4125,
+        }, format='json')
+        self.assertEqual(res_lon_only.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 4. Longitude out of bounds
+        res_lon_oob = self.client.post('/api/locations/journey/start/', {
+            'latitude': 23.8103,
+            'longitude': 195.0,
+        }, format='json')
+        self.assertEqual(res_lon_oob.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('between -180 and 180', res_lon_oob.data.get('error', ''))
+
+        # 5. String NaN
+        res_nan = self.client.post('/api/locations/journey/start/', {
+            'latitude': 'NaN',
+            'longitude': 90.4125,
+        }, format='json')
+        self.assertEqual(res_nan.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 6. String Infinity
+        res_inf = self.client.post('/api/locations/journey/start/', {
+            'latitude': 'Infinity',
+            'longitude': 90.4125,
+        }, format='json')
+        self.assertEqual(res_inf.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 7. Legitimate GPS coordinates: should start journey AND publish active sharing
+        res_valid = self.client.post('/api/locations/journey/start/', {
+            'latitude': 23.81035,
+            'longitude': 90.41255,
+            'accuracy': 15.0,
+            'speed': 10.5,
+            'heading': 180.0,
+        }, format='json')
+        self.assertEqual(res_valid.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_valid.data['status'], 'success')
+
+        journey_id = res_valid.data['journey_id']
+        j = Journey.objects.get(id=journey_id)
+        self.assertAlmostEqual(float(j.start_latitude), 23.81035, places=4)
+        self.assertAlmostEqual(float(j.start_longitude), 90.41255, places=4)
+
+        # Confirm DriverLocation is active with correct values
+        dloc = DriverLocation.objects.get(driver=self.driver2)
+        self.assertTrue(dloc.is_sharing)
+        self.assertEqual(dloc.journey_id, journey_id)
+        self.assertAlmostEqual(float(dloc.latitude), 23.81035, places=4)
+        self.assertAlmostEqual(float(dloc.longitude), 90.41255, places=4)
+
+    # 24. Task 020.2 & 020.3: Locked route revision geometry and stops are strictly coherent
+    def test_locked_route_revision_geometry_and_stops_preserved_on_journey(self):
+        from schedules.models import RouteRevision, Stop
+        # Complete existing journey1 for driver1 so a new journey can be started
+        self.journey1.status = 'completed'
+        self.journey1.save()
+
+        # Create RouteRevision 1 (Published)
+        rev1 = RouteRevision.objects.create(
+            route=self.route1,
+            revision_number=1,
+            status=RouteRevision.STATUS_DRAFT,
+            geometry={'type': 'LineString', 'coordinates': [[90.40, 23.80], [90.41, 23.81]]},
+            distance_km=Decimal('2.5'),
+            duration_mins=10,
+        )
+        self.route1.publish_revision(rev1)
+        self.route1.refresh_from_db()
+
+        # Start journey with rev1 locked
+        self.client.force_authenticate(user=self.driver1)
+        start_res = self.client.post('/api/locations/journey/start/', {
+            'latitude': 23.805,
+            'longitude': 90.405,
+        }, format='json')
+        self.assertEqual(start_res.status_code, status.HTTP_200_OK)
+        active_j = Journey.objects.get(id=start_res.data['journey_id'])
+        self.assertEqual(active_j.route_revision_id, rev1.id)
+
+        # Now create RouteRevision 2 and publish it on the route
+        rev2 = RouteRevision.objects.create(
+            route=self.route1,
+            revision_number=2,
+            status=RouteRevision.STATUS_DRAFT,
+            geometry={'type': 'LineString', 'coordinates': [[90.50, 23.90], [90.51, 23.91]]},
+            distance_km=Decimal('5.0'),
+            duration_mins=20,
+        )
+        self.route1.publish_revision(rev2)
+        self.route1.refresh_from_db()
+        self.assertEqual(self.route1.active_revision_id, rev2.id)
+
+        # Query bus detail API: MUST return locked rev1 geometry, NOT the newly published rev2!
+        self.client.force_authenticate(user=self.student)
+        detail_res = self.client.get(f'/api/buses/{self.bus1.id}/')
+        self.assertEqual(detail_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            detail_res.data['planned_route_geometry']['coordinates'],
+            [[90.40, 23.80], [90.41, 23.81]],
+            "Bus detail must preserve running journey's locked route revision geometry"
+        )
+
+    # 25. Task 020.3: Locked revision missing geometry or stops does NOT silently mix with newer revisions
+    def test_locked_revision_missing_geometry_or_stops_does_not_mix_with_newer_revisions(self):
+        from schedules.models import RouteRevision
+        # Complete existing journey1
+        self.journey1.status = 'completed'
+        self.journey1.save()
+
+        # Create and publish revision with geometry & stops
+        rev1 = RouteRevision.objects.create(
+            route=self.route1,
+            revision_number=1,
+            status=RouteRevision.STATUS_DRAFT,
+            geometry={'type': 'LineString', 'coordinates': [[90.1, 23.1], [90.2, 23.2]]},
+            distance_km=Decimal('2.0'),
+            duration_mins=10,
+        )
+        self.route1.publish_revision(rev1)
+        self.route1.refresh_from_db()
+
+        # Start journey on Revision 1
+        self.client.force_authenticate(user=self.driver1)
+        res_start = self.client.post('/api/locations/journey/start/', {
+            'latitude': 23.805,
+            'longitude': 90.405,
+        }, format='json')
+        self.assertEqual(res_start.status_code, status.HTTP_200_OK)
+
+        # Now simulate a legacy revision where geometry is empty/corrupt on disk (using raw SQL update to bypass immutability triggers)
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute("UPDATE route_revisions SET geometry = NULL WHERE id = %s", [rev1.id])
+        rev1.refresh_from_db()
+
+        # Create Revision 2 WITH geometry and publish it
+        rev2 = RouteRevision.objects.create(
+            route=self.route1,
+            revision_number=2,
+            status=RouteRevision.STATUS_DRAFT,
+            geometry={'type': 'LineString', 'coordinates': [[90.99, 23.99], [90.98, 23.98]]},
+            distance_km=Decimal('3.0'),
+            duration_mins=15,
+        )
+        self.route1.publish_revision(rev2)
+        self.route1.refresh_from_db()
+
+        # Inspect bus detail API: MUST return planned_route_geometry=None, NEVER rev2's geometry!
+        self.client.force_authenticate(user=self.student)
+        res_detail = self.client.get(f'/api/buses/{self.bus1.id}/')
+        self.assertEqual(res_detail.status_code, status.HTTP_200_OK)
+        self.assertIsNone(
+            res_detail.data['planned_route_geometry'],
+            "Must never borrow geometry from rev2 for a journey locked to rev1"
+        )
+        # Verify stops are sourced from rev1's snapshot, not mutated
+        self.assertEqual(len(res_detail.data['planned_route_stops']), 2)
+
+    # 26. Task 020.4: Active journey with missing stop snapshot in locked revision does NOT use mutable route stops
+    def test_active_journey_missing_stops_snapshot_does_not_use_mutable_stops(self):
+        from schedules.models import RouteRevision, Stop
+        # Complete existing journey1
+        self.journey1.status = 'completed'
+        self.journey1.save()
+
+        # Create revision with geometry, but empty metadata (no stops_snapshot)
+        rev_no_stops = RouteRevision.objects.create(
+            route=self.route1,
+            revision_number=1,
+            status=RouteRevision.STATUS_DRAFT,
+            geometry={'type': 'LineString', 'coordinates': [[90.15, 23.15], [90.25, 23.25]]},
+            distance_km=Decimal('2.0'),
+            duration_mins=10,
+            metadata={} # Empty: missing stops_snapshot
+        )
+        # Force published without adding snapshot
+        rev_no_stops._controlled_publishing = True
+        rev_no_stops.status = RouteRevision.STATUS_PUBLISHED
+        rev_no_stops.save()
+
+        # Create active journey locked to rev_no_stops
+        Journey.objects.create(
+            driver=self.driver1,
+            bus=self.bus1,
+            route=self.route1,
+            route_revision=rev_no_stops,
+            assignment=self.assignment1,
+            status='active',
+            start_latitude=Decimal('23.805'),
+            start_longitude=Decimal('90.405'),
+        )
+
+        # Mutate current route stops
+        Stop.objects.create(
+            route=self.route1,
+            name='New Mutated Stop',
+            latitude=Decimal('23.8500000'),
+            longitude=Decimal('90.4500000'),
+            order=3,
+        )
+
+        # Call bus detail API: stops must be empty [] because locked revision has no snapshot!
+        self.client.force_authenticate(user=self.student)
+        res_detail = self.client.get(f'/api/buses/{self.bus1.id}/')
+        self.assertEqual(res_detail.status_code, status.HTTP_200_OK)
+        self.assertIsNotNone(res_detail.data['planned_route_geometry'])
+        self.assertEqual(
+            res_detail.data['planned_route_stops'],
+            [],
+            "Active journey must never substitute mutable current route stops for missing revision snapshot"
+        )
+
+
+

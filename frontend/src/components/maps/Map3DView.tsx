@@ -33,22 +33,31 @@ import {
   Navigation,
 } from 'lucide-react';
 import { ThreeMap3DLayer, type ActiveBusData } from '@/lib/map3d/threeMapLayer';
+import {
+  PILOT_MAP_STYLE_URL,
+  IUBAT_CAMPUS_CENTER,
+  DEFAULT_CAMERA_PITCH,
+  ISOMETRIC_CAMERA_PITCH,
+  SATELLITE_IMAGERY_ENABLED,
+} from '@/lib/mapConfig';
 
 export type Map3DStylePreset = 'satellite' | 'mapbox-satellite' | 'voyager' | 'architectural' | 'dark';
 export type LightingPreset = 'day' | 'dusk' | 'night';
 
-const BASE_VECTOR_STYLE = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
-const SATELLITE_RASTER_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const BASE_VECTOR_STYLE = PILOT_MAP_STYLE_URL;
+const SATELLITE_RASTER_URL = SATELLITE_IMAGERY_ENABLED
+  ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+  : '';
 
 const STYLE_URLS: Record<Map3DStylePreset, string> = {
   satellite: BASE_VECTOR_STYLE,
   'mapbox-satellite': 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
   voyager: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
-  architectural: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+  architectural: BASE_VECTOR_STYLE,
   dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
 };
 
-const DEFAULT_CENTER: [number, number] = [90.4125, 23.8103]; // [lng, lat] for MapLibre
+const DEFAULT_CENTER: [number, number] = IUBAT_CAMPUS_CENTER; // [lng, lat] for MapLibre
 
 export interface StopPoint {
   id: number;
@@ -101,7 +110,7 @@ export default function Map3DView({
   const mapRef = useRef<MapLibreMap | null>(null);
   const threeLayerRef = useRef<ThreeMap3DLayer | null>(null);
 
-  const [is3DMode, setIs3DMode] = useState<boolean>(true);
+  const [is3DMode, setIs3DMode] = useState<boolean>(false);
   const [stylePreset, setStylePreset] = useState<Map3DStylePreset>('satellite');
   const [lightingPreset, setLightingPreset] = useState<LightingPreset>('day');
   const [showStyleMenu, setShowStyleMenu] = useState<boolean>(false);
@@ -402,8 +411,8 @@ export default function Map3DView({
       style: STYLE_URLS[stylePreset],
       center: initialCenter,
       zoom: 16.2,
-      pitch: 58, // 3D Isometric tilt angle
-      bearing: -18, // Angled street perspective
+      pitch: DEFAULT_CAMERA_PITCH, // Flat 2D view by default
+      bearing: 0,
       maxPitch: 82,
     });
 
@@ -411,16 +420,18 @@ export default function Map3DView({
     threeLayerRef.current = threeLayer;
 
     map.on('style.load', () => {
-      // Add Real High-Res Satellite layer
-      if (stylePreset === 'satellite' || stylePreset === 'mapbox-satellite') {
+      // Add Real High-Res Satellite layer (only if enabled and satellite preset selected)
+      if (SATELLITE_IMAGERY_ENABLED && stylePreset === 'mapbox-satellite') {
         setupSatelliteLayer(map);
       }
 
-      // Add 3D architectural building extrusions
-      setup3DBuildings(map);
+      // Add 3D architectural building extrusions (only if 3D mode enabled by user)
+      if (is3DMode) {
+        setup3DBuildings(map);
+      }
 
-      // Add Three.js 3D buses layer
-      if (!map.getLayer(threeLayer.id)) {
+      // Add Three.js 3D buses layer (only if 3D mode enabled by user)
+      if (is3DMode && !map.getLayer(threeLayer.id)) {
         map.addLayer(threeLayer);
       }
 
@@ -510,15 +521,28 @@ export default function Map3DView({
     if (!map) return;
 
     if (is3DMode) {
+      if (map.getLayer('3d-buildings-extrusion')) {
+        map.setLayoutProperty('3d-buildings-extrusion', 'visibility', 'none');
+      }
+      if (threeLayerRef.current && map.getLayer(threeLayerRef.current.id)) {
+        map.removeLayer(threeLayerRef.current.id);
+      }
       map.easeTo({
-        pitch: 0,
+        pitch: DEFAULT_CAMERA_PITCH,
         bearing: 0,
         duration: 1000,
       });
       setIs3DMode(false);
     } else {
+      setup3DBuildings(map);
+      if (map.getLayer('3d-buildings-extrusion')) {
+        map.setLayoutProperty('3d-buildings-extrusion', 'visibility', 'visible');
+      }
+      if (threeLayerRef.current && !map.getLayer(threeLayerRef.current.id)) {
+        map.addLayer(threeLayerRef.current);
+      }
       map.easeTo({
-        pitch: 58,
+        pitch: ISOMETRIC_CAMERA_PITCH,
         bearing: -18,
         zoom: 16.2,
         duration: 1200,

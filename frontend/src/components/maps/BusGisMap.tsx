@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AttributionControl,
   Map as MapLibreMap,
   Marker,
   Popup,
@@ -21,7 +22,6 @@ if (typeof window !== 'undefined') {
 
 import { ThreeMap3DLayer, type ActiveBusData } from '@/lib/map3d/threeMapLayer';
 import {
-  fetchRoadRouteGeometry,
   getBusRoadHeading,
   getCurrentLocationName,
   getNextUpcomingStop,
@@ -29,45 +29,26 @@ import {
   splitRouteByBusPosition,
   type StopInfo,
 } from '@/lib/map3d/routeGeometry';
+import { isValidCoordinate } from '@/lib/trackingStatus';
 import FloatingBusHUD from './FloatingBusHUD';
 import BusMarkerPopup, { type BusPopupData } from './BusMarkerPopup';
 import MapInterfaceControls, { type MapLayerPreset } from './MapInterfaceControls';
+import {
+  PILOT_MAP_STYLE_URL,
+  PILOT_MAP_BRIGHT_STYLE_URL,
+  PILOT_MAP_DARK_STYLE_URL,
+  IUBAT_CAMPUS_CENTER,
+  DEFAULT_CAMERA_PITCH,
+  ISOMETRIC_CAMERA_PITCH,
+  PILOT_MAP_ATTRIBUTION,
+  SATELLITE_IMAGERY_ENABLED,
+} from '@/lib/mapConfig';
 
 /**
- * 1. Google Photorealistic HD Satellite / Hybrid Style Specification
- * Sub-meter resolution aerial imagery across Bangladesh (Dhaka, Gazipur, Tongi, Kuril, etc.)
- * with high-contrast road network and neighborhood place labels.
+ * 1. OpenFreeMap Liberty Vector Style (Pilot Approved Standard)
+ * Fast, open-source vector tiles supporting 2D/3D extruded buildings (zero API key, 100% free).
  */
-export const GOOGLE_HYBRID_STYLE: StyleSpecification = {
-  version: 8,
-  sources: {
-    'google-satellite-tiles': {
-      type: 'raster',
-      tiles: [
-        'https://mt0.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
-        'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
-        'https://mt2.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
-        'https://mt3.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
-      ],
-      tileSize: 256,
-      maxzoom: 22,
-      attribution: 'Google Satellite Imagery',
-    },
-  },
-  layers: [
-    {
-      id: 'google-satellite-raster',
-      type: 'raster',
-      source: 'google-satellite-tiles',
-      paint: {
-        'raster-opacity': 1.0,
-        'raster-contrast': 0.1,
-        'raster-saturation': 0.14,
-        'raster-resampling': 'linear',
-      },
-    },
-  ],
-};
+export const PILOT_LIBERTY_STYLE_URL = PILOT_MAP_STYLE_URL;
 
 /**
  * 2. Esri High-Resolution World Imagery 3D (Bus GIS Satellite Style)
@@ -78,26 +59,32 @@ export const ESRI_SATELLITE_STYLE: StyleSpecification = {
   sources: {
     'esri-satellite-tiles': {
       type: 'raster',
-      tiles: [
-        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      ],
+      tiles: SATELLITE_IMAGERY_ENABLED
+        ? [
+            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+          ]
+        : [],
       tileSize: 256,
       maxzoom: 19,
       attribution: 'Esri World Imagery, Maxar, Earthstar Geographics',
     },
     'esri-roads-tiles': {
       type: 'raster',
-      tiles: [
-        'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
-      ],
+      tiles: SATELLITE_IMAGERY_ENABLED
+        ? [
+            'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
+          ]
+        : [],
       tileSize: 256,
       maxzoom: 19,
     },
     'esri-labels-tiles': {
       type: 'raster',
-      tiles: [
-        'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-      ],
+      tiles: SATELLITE_IMAGERY_ENABLED
+        ? [
+            'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+          ]
+        : [],
       tileSize: 256,
       maxzoom: 19,
     },
@@ -133,19 +120,24 @@ export const ESRI_SATELLITE_STYLE: StyleSpecification = {
   ],
 };
 
-const BASE_STYLES: Record<MapLayerPreset, string | StyleSpecification> = {
-  satellite: GOOGLE_HYBRID_STYLE,
-  'mapbox-satellite': ESRI_SATELLITE_STYLE,
+export const BASE_STYLES: Record<string, string | StyleSpecification> = {
+  liberty: PILOT_MAP_STYLE_URL,
+  bright: PILOT_MAP_BRIGHT_STYLE_URL,
+  dark: PILOT_MAP_DARK_STYLE_URL,
   voyager: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
-  dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  // Backward compatibility: satellite layers safely map to pilot vector basemap (unauthenticated Esri calls disabled)
+  satellite: PILOT_MAP_STYLE_URL,
+  'mapbox-satellite': PILOT_MAP_STYLE_URL,
 };
 
 // IUBAT Permanent Campus: 4 Embankment Drive Road, Sector 10, Uttara Model Town, Dhaka 1230
-const DEFAULT_CENTER: [number, number] = [90.3896, 23.8878];
+const DEFAULT_CENTER: [number, number] = IUBAT_CAMPUS_CENTER;
 
 export interface BusGisMapProps {
   buses?: ActiveBusData[];
-  routePath?: [number, number][]; // [longitude, latitude][]
+  routePath?: [number, number][]; // [longitude, latitude][] planned route
+  roadGeometry?: [number, number][];
+  breadcrumbTrail?: [number, number][]; // [longitude, latitude][] historical GPS breadcrumbs
   stops?: StopInfo[];
   routeName?: string;
   originName?: string;
@@ -162,10 +154,12 @@ export interface BusGisMapProps {
 export default function BusGisMap({
   buses = [],
   routePath,
+  roadGeometry: roadGeometryProp,
+  breadcrumbTrail,
   stops = [],
-  routeName = 'IUBAT - Campus Express',
-  originName = 'IUBAT Permanent Campus',
-  destinationName = 'Kuril Interchange',
+  routeName = 'IUBAT Transit Line',
+  originName = 'Origin Terminal',
+  destinationName = 'Destination Terminal',
   focusedBusId = null,
   followingBusId = null,
   userPosition = null,
@@ -177,30 +171,33 @@ export default function BusGisMap({
   const mapRef = useRef<MapLibreMap | null>(null);
   const threeLayerRef = useRef<ThreeMap3DLayer | null>(null);
   const busMarkersRef = useRef<Map<number, Marker>>(new Map());
+  const userMarkerRef = useRef<Marker | null>(null);
+  const breadcrumbTrailRef = useRef(breadcrumbTrail);
+  breadcrumbTrailRef.current = breadcrumbTrail;
 
-  const [is3DMode, setIs3DMode] = useState(true);
-  const [activeLayer, setActiveLayer] = useState<MapLayerPreset>('satellite');
+  const [is3DMode, setIs3DMode] = useState(false); // Default to flat 2D mode for mobile battery & performance
+  const [activeLayer, setActiveLayer] = useState<MapLayerPreset>('liberty');
   const [selectedBusId, setSelectedBusId] = useState<number | null>(focusedBusId);
   const [isFollowing, setIsFollowing] = useState<boolean>(true); // Auto-follow enabled by default!
   const [popupBusData, setPopupBusData] = useState<BusPopupData | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [roadGeometry, setRoadGeometry] = useState<[number, number][] | null>(null);
 
-  // Fetch true Bangladesh road geometry (OSRM driving route) connecting the stops
-  // Ensures the route polyline strictly follows actual streets without crossing buildings
-  useEffect(() => {
-    let isMounted = true;
-    if (stops.length >= 2) {
-      fetchRoadRouteGeometry(stops).then((coords) => {
-        if (isMounted && coords.length >= 2) {
-          setRoadGeometry(coords);
-        }
-      });
+  // True road geometry is present ONLY when delivered via roadGeometryProp or routePath from backend RouteRevision.
+  // If routePath is merely an echo of stop coordinates, it is recognized as schematic fallback (NOT road-snapped geometry).
+  const isTrueRoadGeometry = useMemo(() => {
+    if (roadGeometryProp && roadGeometryProp.length >= 2) return true;
+    if (routePath && routePath.length >= 2) {
+      if (!stops || stops.length < 2) return true;
+      if (routePath.length === stops.length) {
+        const isJustStops = routePath.every(
+          (pt, i) => Math.abs(pt[0] - stops[i].longitude) < 0.00001 && Math.abs(pt[1] - stops[i].latitude) < 0.00001
+        );
+        if (isJustStops) return false;
+      }
+      return true;
     }
-    return () => {
-      isMounted = false;
-    };
-  }, [stops]);
+    return false;
+  }, [roadGeometryProp, routePath, stops]);
 
   // Open bus popup
   const handleBusClick = useCallback(
@@ -215,7 +212,9 @@ export default function BusGisMap({
         latitude: bus.latitude,
         longitude: bus.longitude,
         routeName: bus.routeName,
-        status: bus.speed && bus.speed > 1 ? 'moving' : 'stopped',
+        status:
+          bus.status ||
+          (bus.speed && bus.speed > 1 ? 'moving' : bus.speed != null ? 'stopped' : 'live'),
         lastUpdated: bus.lastUpdated ? new Date(bus.lastUpdated).toLocaleTimeString() : 'Just now',
       });
     },
@@ -236,83 +235,73 @@ export default function BusGisMap({
     return buses.find((b) => b.id === selectedBusId) || (buses.length > 0 ? buses[0] : null);
   }, [buses, selectedBusId]);
 
-  // Active road path (prefers real BD road geometry from OSRM connecting IUBAT stops)
+  // Active planned route path
   const activeRoadPath = useMemo(() => {
-    if (roadGeometry && roadGeometry.length >= 2) return roadGeometry;
+    if (roadGeometryProp && roadGeometryProp.length >= 2) return roadGeometryProp;
     if (routePath && routePath.length >= 2) return routePath;
     if (stops && stops.length >= 2) return stops.map((s) => [s.longitude, s.latitude] as [number, number]);
-    return [
-      [90.3896, 23.8878], // IUBAT Permanent Campus
-      [90.3910, 23.8845], // Sector 10 Embankment Road
-      [90.3925, 23.8820], // Abdullahpur Station
-      [90.3950, 23.8750], // Uttara House Building
-      [90.3990, 23.8680], // Uttara Sector 3
-      [90.4075, 23.8515], // Airport Station
-      [90.4180, 23.8340], // Khilkhet Transit
-      [90.4215, 23.8250], // Kuril Interchange
-    ] as [number, number][];
-  }, [roadGeometry, routePath, stops]);
+    // Do NOT fabricate fallback routes when geometry is unavailable
+    return [] as [number, number][];
+  }, [roadGeometryProp, routePath, stops]);
 
   // Calculate route split (completed vs remaining), progress, current location, road heading, and next stop
   const routeMetrics = useMemo(() => {
     if (!selectedBus) {
       return {
-        completed: activeRoadPath,
-        remaining: [],
-        progressPercent: 65,
-        currentLocationName: stops[0]?.name || 'IUBAT Permanent Campus',
-        nextStopName: stops[1]?.name || 'Abdullahpur Station',
-        distanceToNextKm: 0.8,
-        etaMinutes: 3,
-        snappedBusCoords: [90.3896, 23.8878] as [number, number],
-        roadHeading: 165,
+        completed: [] as [number, number][],
+        remaining: activeRoadPath,
+        progressPercent: 0,
+        currentLocationName: stops[0]?.name || originName,
+        nextStopName: stops[1]?.name || '—',
+        distanceToNextKm: null as number | null,
+        etaMinutes: null as number | null,
+        snappedBusCoords: null as [number, number] | null,
+        roadHeading: 0,
       };
     }
 
-    // Snap bus GPS coordinates to the nearest road point so the vehicle sits directly on the road
-    const snappedBusCoords = snapBusToRoad(
-      selectedBus.longitude,
-      selectedBus.latitude,
-      activeRoadPath
-    );
+    const hasRoad = activeRoadPath.length >= 2;
 
-    const roadHeading = getBusRoadHeading(
-      snappedBusCoords[0],
-      snappedBusCoords[1],
-      activeRoadPath,
-      selectedBus.heading || 165
-    );
+    // CRITICAL ROUTE GEOMETRY INTEGRITY:
+    // Snap bus GPS coordinates to the nearest road point ONLY if authentic planned road geometry is available.
+    // When only schematic stop connections exist, NEVER snap to straight lines (preserves authentic GPS coordinates).
+    const snappedBusCoords: [number, number] = (isTrueRoadGeometry && hasRoad)
+      ? snapBusToRoad(selectedBus.longitude, selectedBus.latitude, activeRoadPath)
+      : [selectedBus.longitude, selectedBus.latitude];
 
-    const { completed, remaining, progressPercent } = splitRouteByBusPosition(
-      snappedBusCoords[0],
-      snappedBusCoords[1],
-      activeRoadPath
-    );
+    const roadHeading = (isTrueRoadGeometry && hasRoad)
+      ? getBusRoadHeading(
+          snappedBusCoords[0],
+          snappedBusCoords[1],
+          activeRoadPath,
+          selectedBus.heading || 165
+        )
+      : (selectedBus.heading || 0);
 
-    const { nextStop, distanceKm, estimatedMinutes } = getNextUpcomingStop(
-      snappedBusCoords[0],
-      snappedBusCoords[1],
-      stops
-    );
+    const { completed, remaining, progressPercent } = hasRoad
+      ? splitRouteByBusPosition(snappedBusCoords[0], snappedBusCoords[1], activeRoadPath)
+      : { completed: [] as [number, number][], remaining: [] as [number, number][], progressPercent: 0 };
 
-    const currentLocationName = getCurrentLocationName(
-      snappedBusCoords[0],
-      snappedBusCoords[1],
-      stops
-    );
+    const { nextStop, distanceKm, estimatedMinutes } = stops.length > 0
+      ? getNextUpcomingStop(snappedBusCoords[0], snappedBusCoords[1], stops)
+      : { nextStop: null, distanceKm: 0, estimatedMinutes: 0 };
+
+    const currentLocationName = stops.length > 0
+      ? getCurrentLocationName(snappedBusCoords[0], snappedBusCoords[1], stops)
+      : null;
 
     return {
       completed,
       remaining,
       progressPercent,
-      currentLocationName: currentLocationName || stops[0]?.name || 'IUBAT Permanent Campus',
-      nextStopName: nextStop?.name || stops[0]?.name || 'Abdullahpur Station',
-      distanceToNextKm: distanceKm,
-      etaMinutes: estimatedMinutes,
+      currentLocationName: currentLocationName || stops[0]?.name || originName,
+      nextStopName: nextStop?.name || '—',
+      distanceToNextKm: stops.length > 0 ? distanceKm : null,
+      etaMinutes: stops.length > 0 ? estimatedMinutes : null,
       snappedBusCoords,
       roadHeading,
     };
-  }, [selectedBus, activeRoadPath, stops]);
+  }, [selectedBus, activeRoadPath, stops, originName, isTrueRoadGeometry]);
 
   // Maintain synchronized refs for MapLibre style lifecycle events
   const routeMetricsRef = useRef(routeMetrics);
@@ -390,31 +379,37 @@ export default function BusGisMap({
       // 1. Completed Route GeoJSON
       const completedGeoJSON: GeoJSON.FeatureCollection<GeoJSON.LineString> = {
         type: 'FeatureCollection',
-        features: [
-          {
-            type: 'Feature',
-            properties: {},
-            geometry: {
-              type: 'LineString',
-              coordinates: completedCoords,
-            },
-          },
-        ],
+        features:
+          completedCoords.length >= 2
+            ? [
+                {
+                  type: 'Feature',
+                  properties: {},
+                  geometry: {
+                    type: 'LineString',
+                    coordinates: completedCoords,
+                  },
+                },
+              ]
+            : [],
       };
 
       // 2. Remaining Route GeoJSON
       const remainingGeoJSON: GeoJSON.FeatureCollection<GeoJSON.LineString> = {
         type: 'FeatureCollection',
-        features: [
-          {
-            type: 'Feature',
-            properties: {},
-            geometry: {
-              type: 'LineString',
-              coordinates: remainingCoords.length > 0 ? remainingCoords : completedCoords,
-            },
-          },
-        ],
+        features:
+          remainingCoords.length >= 2
+            ? [
+                {
+                  type: 'Feature',
+                  properties: {},
+                  geometry: {
+                    type: 'LineString',
+                    coordinates: remainingCoords,
+                  },
+                },
+              ]
+            : [],
       };
 
       const completedSource = map.getSource('completed-route-source') as GeoJSONSource | undefined;
@@ -490,6 +485,53 @@ export default function BusGisMap({
     },
     []
   );
+
+  // Dedicated historical GPS breadcrumb layer (visually distinct from planned route)
+  const setupBreadcrumbLayer = useCallback((map: MapLibreMap, trailCoords: [number, number][]) => {
+    const geojson: GeoJSON.FeatureCollection<GeoJSON.LineString> = {
+      type: 'FeatureCollection',
+      features:
+        trailCoords.length >= 2
+          ? [
+              {
+                type: 'Feature',
+                properties: {},
+                geometry: {
+                  type: 'LineString',
+                  coordinates: trailCoords,
+                },
+              },
+            ]
+          : [],
+    };
+
+    const source = map.getSource('breadcrumb-trail-source') as GeoJSONSource | undefined;
+    if (source) {
+      source.setData(geojson);
+      return;
+    }
+
+    if (!map.getSource('breadcrumb-trail-source')) {
+      map.addSource('breadcrumb-trail-source', {
+        type: 'geojson',
+        data: geojson,
+      });
+    }
+
+    if (!map.getLayer('breadcrumb-trail-line')) {
+      map.addLayer({
+        id: 'breadcrumb-trail-line',
+        type: 'line',
+        source: 'breadcrumb-trail-source',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': '#2563eb', // Solid distinct blue for historical GPS trail
+          'line-width': 4,
+          'line-opacity': 0.85,
+        },
+      });
+    }
+  }, []);
 
   // Station/Stop Markers with sequence numbering
   const setupStopMarkers = useCallback((map: MapLibreMap, stopList: StopInfo[]) => {
@@ -586,26 +628,36 @@ export default function BusGisMap({
 
     const map = new MapLibreMap({
       container: containerRef.current,
-      style: BASE_STYLES[activeLayer],
+      style: BASE_STYLES[activeLayer] || PILOT_MAP_STYLE_URL,
       center: initialCenter,
-      zoom: 17.0,
-      pitch: 58,
-      bearing: -18,
+      zoom: 16.5,
+      pitch: DEFAULT_CAMERA_PITCH,
+      bearing: 0,
       maxPitch: 82,
       maxZoom: 22,
       minZoom: 3,
       fadeDuration: 0,
+      attributionControl: false,
     });
+
+    map.addControl(
+      new AttributionControl({
+        customAttribution: PILOT_MAP_ATTRIBUTION,
+      }),
+      'bottom-right'
+    );
 
     const threeLayer = new ThreeMap3DLayer('3d-bus-gis-vehicles');
     threeLayerRef.current = threeLayer;
 
     map.on('style.load', () => {
-      // 1. Add 3D Extrusions (only for vector basemaps like Voyager or Dark)
-      setup3DBuildings(map);
+      // 1. Add 3D Extrusions (only if 3D mode is enabled by user)
+      if (is3DMode) {
+        setup3DBuildings(map);
+      }
 
-      // 2. Add Three.js Bus Model Layer
-      if (threeLayerRef.current && !map.getLayer(threeLayerRef.current.id)) {
+      // 2. Add Three.js Bus Model Layer (only if 3D mode is enabled by user)
+      if (is3DMode && threeLayerRef.current && !map.getLayer(threeLayerRef.current.id)) {
         map.addLayer(threeLayerRef.current);
       }
 
@@ -618,6 +670,9 @@ export default function BusGisMap({
 
       // 4. Add Stop Stations
       setupStopMarkers(map, stopsRef.current);
+
+      // 5. Add Dedicated Historical Breadcrumb Layer
+      setupBreadcrumbLayer(map, breadcrumbTrailRef.current || []);
     });
 
     mapRef.current = map;
@@ -626,6 +681,10 @@ export default function BusGisMap({
     return () => {
       busMarkers.forEach((m) => m.remove());
       busMarkers.clear();
+      if (userMarkerRef.current) {
+        userMarkerRef.current.remove();
+        userMarkerRef.current = null;
+      }
       map.remove();
       mapRef.current = null;
       threeLayerRef.current = null;
@@ -666,7 +725,7 @@ export default function BusGisMap({
     map.easeTo({
       center: coords,
       bearing: is3DMode ? busHeading - 10 : 0,
-      pitch: is3DMode ? 58 : 0,
+      pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
       zoom: 17.0,
       duration: 1200,
     });
@@ -695,12 +754,25 @@ export default function BusGisMap({
           : isSelected && routeMetrics.roadHeading
           ? routeMetrics.roadHeading
           : 165;
-      const speedKmh = bus.speed != null ? Math.round(bus.speed * 3.6) : 0;
-      const status = bus.status || (isMoving ? 'moving' : 'stopped');
+      const speedKmh =
+        bus.speed != null && !isNaN(Number(bus.speed))
+          ? Math.max(0, Math.round(Number(bus.speed) * 3.6))
+          : null;
+      const status = bus.status || (isMoving ? 'moving' : bus.speed != null ? 'stopped' : 'live');
       const busCoords =
         isSelected && routeMetrics.snappedBusCoords
           ? routeMetrics.snappedBusCoords
           : [bus.longitude, bus.latitude];
+      // Compute truthful marker badge text
+      const markerBadgeText =
+        status === 'offline'
+          ? 'OFFLINE'
+          : status === 'stale'
+          ? 'STALE'
+          : speedKmh != null
+          ? `${speedKmh} km/h`
+          : 'LIVE';
+
       const locationName = isSelected
         ? routeMetrics.currentLocationName
         : stops[0]?.name || 'IUBAT Permanent Campus';
@@ -728,12 +800,20 @@ export default function BusGisMap({
                 ? 'bg-emerald-400 animate-ping'
                 : status === 'stopped'
                 ? 'bg-amber-400'
+                : status === 'live'
+                ? 'bg-emerald-400'
+                : status === 'stale'
+                ? 'bg-amber-500'
                 : 'bg-slate-400'
             }"></span>
             <span class="bus-label">${bus.busNumber}</span>
-            <span class="speed-badge px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 text-[9px] font-mono">${
-              speedKmh > 0 ? `${speedKmh} km/h` : 'LIVE'
-            }</span>
+            <span class="speed-badge px-1.5 py-0.2 rounded ${
+              status === 'offline'
+                ? 'bg-slate-800 text-slate-400'
+                : status === 'stale'
+                ? 'bg-amber-500/20 text-amber-300'
+                : 'bg-cyan-500/20 text-cyan-300'
+            } text-[9px] font-mono">${markerBadgeText}</span>
           </div>
         `;
         el.onclick = (e) => {
@@ -753,7 +833,16 @@ export default function BusGisMap({
         const locationText = el.querySelector('.location-name-text') as HTMLElement | null;
         if (locationText) locationText.textContent = locationName;
         const speedBadge = el.querySelector('.speed-badge') as HTMLElement | null;
-        if (speedBadge) speedBadge.textContent = speedKmh > 0 ? `${speedKmh} km/h` : 'LIVE';
+        if (speedBadge) {
+          speedBadge.textContent = markerBadgeText;
+          speedBadge.className = `speed-badge px-1.5 py-0.2 rounded ${
+            status === 'offline'
+              ? 'bg-slate-800 text-slate-400'
+              : status === 'stale'
+              ? 'bg-amber-500/20 text-amber-300'
+              : 'bg-cyan-500/20 text-cyan-300'
+          } text-[9px] font-mono`;
+        }
         const statusDot = el.querySelector('.status-dot') as HTMLElement | null;
         if (statusDot) {
           statusDot.className = `status-dot w-1.5 h-1.5 rounded-full ${
@@ -761,6 +850,10 @@ export default function BusGisMap({
               ? 'bg-emerald-400 animate-ping'
               : status === 'stopped'
               ? 'bg-amber-400'
+              : status === 'live'
+              ? 'bg-emerald-400'
+              : status === 'stale'
+              ? 'bg-amber-500'
               : 'bg-slate-400'
           }`;
         }
@@ -784,6 +877,45 @@ export default function BusGisMap({
     }
   }, [routeMetrics, setupRouteLayers]);
 
+  // Sync historical breadcrumb trail
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map && map.isStyleLoaded()) {
+      setupBreadcrumbLayer(map, breadcrumbTrail || []);
+    }
+  }, [breadcrumbTrail, setupBreadcrumbLayer]);
+
+  // Sync passenger location marker
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (!userPosition || !isValidCoordinate(userPosition[0], userPosition[1])) {
+      if (userMarkerRef.current) {
+        userMarkerRef.current.remove();
+        userMarkerRef.current = null;
+      }
+      return;
+    }
+
+    const [userLat, userLng] = userPosition;
+    if (userMarkerRef.current) {
+      userMarkerRef.current.setLngLat([userLng, userLat]);
+    } else {
+      const el = document.createElement('div');
+      el.className = 'passenger-location-marker';
+      el.innerHTML = `
+        <div style="position:relative;width:24px;height:24px;display:flex;align-items:center;justify-content:center;">
+          <div style="position:absolute;width:24px;height:24px;border-radius:9999px;background:rgba(37,99,235,0.25);animation:ping 2s cubic-bezier(0,0,0.2,1) infinite;"></div>
+          <div style="width:14px;height:14px;border-radius:9999px;background:#2563eb;border:2.5px solid #ffffff;box-shadow:0 2px 6px rgba(0,0,0,0.4);"></div>
+        </div>
+      `;
+      userMarkerRef.current = new Marker({ element: el })
+        .setLngLat([userLng, userLat])
+        .addTo(map);
+    }
+  }, [userPosition]);
+
   // Sync stops
   useEffect(() => {
     const map = mapRef.current;
@@ -806,10 +938,23 @@ export default function BusGisMap({
     const map = mapRef.current;
     if (!map) return;
     if (is3DMode) {
-      map.easeTo({ pitch: 0, bearing: 0, duration: 1000 });
+      if (map.getLayer('3d-buildings-extrusion')) {
+        map.setLayoutProperty('3d-buildings-extrusion', 'visibility', 'none');
+      }
+      if (threeLayerRef.current && map.getLayer(threeLayerRef.current.id)) {
+        map.removeLayer(threeLayerRef.current.id);
+      }
+      map.easeTo({ pitch: DEFAULT_CAMERA_PITCH, bearing: 0, duration: 1000 });
       setIs3DMode(false);
     } else {
-      map.easeTo({ pitch: 58, bearing: -18, zoom: 16.2, duration: 1200 });
+      setup3DBuildings(map);
+      if (map.getLayer('3d-buildings-extrusion')) {
+        map.setLayoutProperty('3d-buildings-extrusion', 'visibility', 'visible');
+      }
+      if (threeLayerRef.current && !map.getLayer(threeLayerRef.current.id)) {
+        map.addLayer(threeLayerRef.current);
+      }
+      map.easeTo({ pitch: ISOMETRIC_CAMERA_PITCH, bearing: -18, zoom: 16.2, duration: 1200 });
       setIs3DMode(true);
     }
   };
@@ -821,7 +966,7 @@ export default function BusGisMap({
       mapRef.current?.flyTo({
         center: [selectedBus.longitude, selectedBus.latitude],
         zoom: 16.5,
-        pitch: is3DMode ? 58 : 0,
+        pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
         bearing: is3DMode ? selectedBus.heading || -18 : 0,
         duration: 1200,
       });
@@ -831,7 +976,7 @@ export default function BusGisMap({
   const handleSelectLayer = (layer: MapLayerPreset) => {
     setActiveLayer(layer);
     activeLayerRef.current = layer;
-    mapRef.current?.setStyle(BASE_STYLES[layer]);
+    mapRef.current?.setStyle(BASE_STYLES[layer] || PILOT_MAP_STYLE_URL);
   };
 
   const handleZoomIn = () => mapRef.current?.zoomIn({ duration: 300 });
@@ -843,7 +988,7 @@ export default function BusGisMap({
     mapRef.current?.flyTo({
       center: [selectedBus.longitude, selectedBus.latitude],
       zoom: 16.8,
-      pitch: is3DMode ? 58 : 0,
+      pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
       bearing: is3DMode ? selectedBus.heading || -18 : 0,
       duration: 1400,
     });
@@ -902,7 +1047,10 @@ export default function BusGisMap({
     }
   };
 
-  const currentSpeed = selectedBus?.speed ? Math.round(selectedBus.speed * 3.6) : 28;
+  const currentSpeed =
+    selectedBus?.speed != null && !isNaN(Number(selectedBus.speed))
+      ? Math.max(0, Math.round(Number(selectedBus.speed) * 3.6))
+      : null;
 
   return (
     <div
@@ -918,7 +1066,7 @@ export default function BusGisMap({
       <MapInterfaceControls
         selectedBusNumber={selectedBus?.busNumber}
         selectedRouteName={selectedBus?.routeName || routeName}
-        isLiveTracking={true}
+        isLiveTracking={Boolean(selectedBus && selectedBus.status !== 'offline')}
         is3DMode={is3DMode}
         isFollowing={isFollowing}
         activeLayer={activeLayer}
@@ -968,11 +1116,33 @@ export default function BusGisMap({
               ? new Date(selectedBus.lastUpdated).toLocaleTimeString()
               : 'Just now'
           }
-          isConnected={true}
-          statusText="LIVE GPS LOCKED"
+          isConnected={selectedBus.status !== 'offline'}
+          statusText={
+            selectedBus.status === 'moving'
+              ? 'LIVE (MOVING)'
+              : selectedBus.status === 'stopped'
+              ? 'LIVE (STOPPED)'
+              : selectedBus.status === 'live'
+              ? 'LIVE'
+              : selectedBus.status === 'stale'
+              ? 'STALE SIGNAL'
+              : 'OFFLINE'
+          }
           isFollowing={isFollowing}
           onToggleFollow={handleToggleFollow}
         />
+      )}
+
+      {/* Truthful Empty State Overlay when no active buses are streaming telemetry */}
+      {buses.length === 0 && (
+        <div className="absolute inset-0 z-20 pointer-events-none flex items-center justify-center p-4">
+          <div className="px-5 py-4 bg-slate-950/90 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl text-center max-w-sm pointer-events-auto">
+            <p className="text-sm font-bold text-white">No Live Buses</p>
+            <p className="text-xs text-slate-400 mt-1">
+              No buses are currently sharing live locations. Telemetry will appear automatically when journeys start.
+            </p>
+          </div>
+        </div>
       )}
 
       {/* Bottom-Right GIS Engine Watermark */}
