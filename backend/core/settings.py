@@ -11,7 +11,18 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-change-this-in-production-
 
 DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.getenv(
+        'ALLOWED_HOSTS',
+        '*,localhost,127.0.0.1,ubus.dsr.iubat.ac.bd,.iubat.ac.bd'
+    ).split(',')
+    if h.strip()
+]
+# Ensure production domain is always present in ALLOWED_HOSTS
+for host in ['localhost', '127.0.0.1', 'ubus.dsr.iubat.ac.bd']:
+    if host not in ALLOWED_HOSTS and '*' not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(host)
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -140,20 +151,25 @@ CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
         'CORS_ALLOWED_ORIGINS',
-        'http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000'
+        'http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000,https://ubus.dsr.iubat.ac.bd'
     ).split(',')
     if origin.strip()
 ]
+if 'https://ubus.dsr.iubat.ac.bd' not in CORS_ALLOWED_ORIGINS:
+    CORS_ALLOWED_ORIGINS.append('https://ubus.dsr.iubat.ac.bd')
+
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
         'CSRF_TRUSTED_ORIGINS',
-        'http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000'
+        'http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000,https://ubus.dsr.iubat.ac.bd'
     ).split(',')
     if origin.strip()
 ]
+if 'https://ubus.dsr.iubat.ac.bd' not in CSRF_TRUSTED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS.append('https://ubus.dsr.iubat.ac.bd')
 
 # Feedback/Authority: Admin email for feedback delivery
 ADMIN_EMAIL = os.getenv('ADMIN_EMAIL', 'admin@localhost')
