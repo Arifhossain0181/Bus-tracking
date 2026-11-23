@@ -32,10 +32,13 @@ export function isRegularUser(role?: string | null): boolean {
   return role === 'student' || role === 'faculty' || role === 'staff';
 }
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL !== undefined
-    ? process.env.NEXT_PUBLIC_API_URL
-    : (typeof window !== 'undefined' ? '' : 'http://127.0.0.1:8000');
+const getBaseUrl = (): string => {
+  if (typeof window !== 'undefined') {
+    // In client browser, always use relative URLs ('') so Next.js rewrites proxy cleanly
+    return '';
+  }
+  return process.env.INTERNAL_BACKEND_URL || 'http://127.0.0.1:8000';
+};
 
 interface ApiFetchOptions extends RequestInit {
   skipAuth?: boolean;
@@ -47,9 +50,14 @@ export async function apiFetch<T = unknown>(
 ): Promise<T> {
   const { skipAuth, headers = {}, ...rest } = options;
 
-  const url = endpoint.startsWith('http')
-    ? endpoint
-    : `${API_BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+  let url: string;
+  if (endpoint.startsWith('http://') || endpoint.startsWith('https://')) {
+    url = endpoint;
+  } else {
+    const baseUrl = getBaseUrl();
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    url = `${baseUrl}${cleanEndpoint}`;
+  }
 
   const token = getAuthToken();
   const reqHeaders: Record<string, string> = {
