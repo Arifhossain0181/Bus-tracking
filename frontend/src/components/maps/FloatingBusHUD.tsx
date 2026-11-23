@@ -23,6 +23,7 @@ export interface FloatingBusHUDProps {
   nextStopName?: string;
   distanceToNextKm?: number | null;
   userDistanceKm?: number | null;
+  userTravelMinutes?: number | null;
   etaMinutes?: number | null;
   routeProgressPercent: number;
   lastUpdatedFormatted: string;
@@ -42,6 +43,7 @@ export default function FloatingBusHUD({
   nextStopName,
   distanceToNextKm = null,
   userDistanceKm = null,
+  userTravelMinutes = null,
   etaMinutes = null,
   routeProgressPercent = 0,
   lastUpdatedFormatted = 'Just now',
@@ -70,12 +72,19 @@ export default function FloatingBusHUD({
                 <span className="hidden xs:inline-block px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-white/10 text-slate-300 truncate max-w-[120px]">
                   {routeName}
                 </span>
-                {/* Distance pill in header for instant visibility without expanding */}
+                {/* Distance and Travel Time pill in header for instant visibility without expanding */}
                 {userDistanceKm != null && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                    {userDistanceKm < 1
-                      ? `${Math.round(userDistanceKm * 1000)}m away`
-                      : `${userDistanceKm.toFixed(1)} km away`}
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 flex items-center gap-1">
+                    <span>
+                      {userDistanceKm < 1
+                        ? `${Math.round(userDistanceKm * 1000)}m away`
+                        : `${userDistanceKm.toFixed(1)} km away`}
+                    </span>
+                    {userTravelMinutes != null && (
+                      <span className="text-amber-300 font-extrabold border-l border-cyan-500/40 pl-1">
+                        ~{userTravelMinutes} min
+                      </span>
+                    )}
                   </span>
                 )}
               </div>
@@ -195,16 +204,29 @@ export default function FloatingBusHUD({
                 </div>
               </div>
 
-              {/* 4. ETA */}
+              {/* 4. ETA & TRAVEL TIME */}
               <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
                 <div className="flex items-center gap-1.5 text-slate-400 text-[10px] uppercase font-medium">
                   <Clock className="w-3 h-3 text-amber-400" />
-                  <span>ETA</span>
+                  <span>{userTravelMinutes != null ? 'Travel Time' : 'ETA'}</span>
                 </div>
                 <div className="mt-1 flex items-baseline gap-1">
                   <span className="text-lg sm:text-xl font-black text-amber-300">
-                    {etaMinutes != null ? (etaMinutes === 0 ? 'Due' : `${etaMinutes}m`) : 'Calculating…'}
+                    {userTravelMinutes != null
+                      ? userTravelMinutes === 0
+                        ? '< 1 min'
+                        : `${userTravelMinutes} min`
+                      : etaMinutes != null
+                      ? etaMinutes === 0
+                        ? 'Due'
+                        : `${etaMinutes}m`
+                      : 'Calculating…'}
                   </span>
+                  {userTravelMinutes != null && etaMinutes != null && (
+                    <span className="text-[9px] text-slate-400">
+                      (Next: {etaMinutes}m)
+                    </span>
+                  )}
                 </div>
               </div>
             </div>

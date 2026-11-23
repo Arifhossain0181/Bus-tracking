@@ -214,6 +214,19 @@ export default function BusGisMap({
     return meters / 1000;
   }, [userPosition, selectedBus]);
 
+  // Estimated travel time to reach bus location (based on current bus speed or average city transit speed)
+  const userTravelMinutes = useMemo(() => {
+    if (userDistanceKm == null) return null;
+    // If distance < 50 meters, effectively arrived
+    if (userDistanceKm < 0.05) return 0;
+    // Use measured vehicle speed if positive, otherwise use standard city transit pace (25 km/h) with 20% traffic buffer
+    const speed = (selectedBus?.speed && Number(selectedBus.speed) > 2)
+      ? Number(selectedBus.speed) * 3.6
+      : 25;
+    const hours = (userDistanceKm / speed) * 1.2;
+    return Math.max(1, Math.round(hours * 60));
+  }, [userDistanceKm, selectedBus?.speed]);
+
   // Open bus popup
   const handleBusClick = useCallback(
     (bus: ActiveBusData) => {
@@ -1146,6 +1159,7 @@ export default function BusGisMap({
           nextStopName={routeMetrics.nextStopName}
           distanceToNextKm={routeMetrics.distanceToNextKm}
           userDistanceKm={userDistanceKm}
+          userTravelMinutes={userTravelMinutes}
           etaMinutes={routeMetrics.etaMinutes}
           routeProgressPercent={routeMetrics.progressPercent}
           lastUpdatedFormatted={
