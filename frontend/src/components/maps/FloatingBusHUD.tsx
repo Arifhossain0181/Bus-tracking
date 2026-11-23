@@ -236,7 +236,3 @@ export default function FloatingBusHUD({
     </div>
   );
 }
-      </div>
-    </div>
-  );
-}
