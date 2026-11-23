@@ -135,6 +135,54 @@ export default function ShareLocationPage() {
     };
   }, [status?.is_sharing]);
 
+  const getQuickLocation = (): Promise<GpsCoordinates | null> => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      return Promise.resolve(null);
+    }
+    return new Promise((resolve) => {
+      let resolved = false;
+      const done = (c: GpsCoordinates | null) => {
+        if (!resolved) {
+          resolved = true;
+          resolve(c);
+        }
+      };
+
+      // Try fast network/Wi-Fi/cached fix first (sub-second)
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          done({
+            lat: Number(pos.coords.latitude.toFixed(7)),
+            lng: Number(pos.coords.longitude.toFixed(7)),
+            accuracy: pos.coords.accuracy != null ? Math.round(pos.coords.accuracy) : null,
+            speed: pos.coords.speed != null ? pos.coords.speed : null,
+            heading: pos.coords.heading != null ? pos.coords.heading : null,
+          });
+        },
+        () => {
+          // If cached/quick fix fails, try high accuracy with short timeout
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              done({
+                lat: Number(pos.coords.latitude.toFixed(7)),
+                lng: Number(pos.coords.longitude.toFixed(7)),
+                accuracy: pos.coords.accuracy != null ? Math.round(pos.coords.accuracy) : null,
+                speed: pos.coords.speed != null ? pos.coords.speed : null,
+                heading: pos.coords.heading != null ? pos.coords.heading : null,
+              });
+            },
+            () => done(null),
+            { enableHighAccuracy: true, timeout: 4000, maximumAge: 0 }
+          );
+        },
+        { enableHighAccuracy: false, timeout: 3000, maximumAge: 60000 }
+      );
+
+      // Never block longer than 4.5 seconds
+      setTimeout(() => done(null), 4500);
+    });
+  };
+
   const startSharing = async () => {
     if (busy || status?.is_sharing) return;
 
@@ -143,30 +191,32 @@ export default function ShareLocationPage() {
     setGpsState('acquiring');
 
     try {
-      const fix = await acquireGpsFix();
+      // 1. Get quick coordinates (never blocks longer than 3-4s)
+      const quickCoords = await getQuickLocation();
 
-      if (!fix.coords || isNaN(fix.coords.lat) || isNaN(fix.coords.lng)) {
-        setGpsState(fix.status);
-        setError(fix.errorMessage || 'Unable to obtain a verified GPS fix.');
-        return;
+      if (quickCoords && !isNaN(quickCoords.lat) && !isNaN(quickCoords.lng)) {
+        setGpsState('acquired');
+        setCoords(quickCoords);
+        lastSentCoordsRef.current = { lat: quickCoords.lat, lng: quickCoords.lng };
+        lastSentTimeRef.current = Date.now();
       }
 
-      setGpsState('acquired');
-      setCoords(fix.coords);
-      lastSentCoordsRef.current = { lat: fix.coords.lat, lng: fix.coords.lng };
-      lastSentTimeRef.current = Date.now();
+      // 2. Start journey on backend (accepts initial coordinates or starts journey for background stream)
+      const payload: Record<string, unknown> = {};
+      if (quickCoords && !isNaN(quickCoords.lat) && !isNaN(quickCoords.lng)) {
+        payload.latitude = quickCoords.lat;
+        payload.longitude = quickCoords.lng;
+        payload.accuracy = quickCoords.accuracy;
+        payload.speed = quickCoords.speed;
+        payload.heading = quickCoords.heading;
+      }
 
       await apiFetch('/api/locations/journey/start/', {
         method: 'POST',
-        body: JSON.stringify({
-          latitude: fix.coords.lat,
-          longitude: fix.coords.lng,
-          accuracy: fix.coords.accuracy,
-          speed: fix.coords.speed,
-          heading: fix.coords.heading,
-        }),
+        body: JSON.stringify(payload),
       });
 
+      setGpsState('acquired');
       setUpdateCount(1);
       setLastSent(new Date().toLocaleTimeString());
       await loadStatus();
@@ -214,57 +264,24 @@ export default function ShareLocationPage() {
         <div className="p-4 rounded-xl bg-blue-50 border border-blue-200 text-blue-800 text-sm flex items-center gap-3">
           <Loader2 className="w-5 h-5 text-blue-600 animate-spin shrink-0" />
           <div>
-            <p className="font-semibold">Acquiring verified GPS fix...</p>
+            <p className="font-semibold">Connecting to GPS location...</p>
             <p className="text-xs text-blue-600 mt-0.5">
-              Locking onto satellite signals (up to 12s). Accuracy must be within ±100m.
+              Acquiring your device location and starting live broadcast.
             </p>
           </div>
         </div>
       )}
 
-      {gpsState === 'timeout' && (
-        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
-            <div>
-              <p className="font-semibold">GPS Acquisition Timed Out</p>
-              <p className="text-xs text-amber-700 mt-0.5">
-                Could not get a GPS fix within 12s. Move away from tall buildings or under clear sky and retry.
-              </p>
-            </div>
+      {/* Off-route / not in vehicle helpful guidance notice */}
+      {isSharing && coords && (
+        <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-slate-800 text-sm flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-slate-900">লোকেশন লাইভ সম্প্রচার হচ্ছে</p>
+            <p className="text-xs text-slate-600 mt-0.5">
+              আপনার বর্তমান অবস্থান লাইভ ম্যাপে দেখা যাচ্ছে। আপনি যদি এখনো গাড়িতে বা নির্ধারিত রুটে না থাকেন, অনুগ্রহ করে বাসে গিয়ে যাত্রা শুরু করুন।
+            </p>
           </div>
-          <button
-            type="button"
-            onClick={startSharing}
-            disabled={busy}
-            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shrink-0"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Retry GPS
-          </button>
-        </div>
-      )}
-
-      {gpsState === 'poor_accuracy' && (
-        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
-            <div>
-              <p className="font-semibold">Poor GPS Accuracy Detected</p>
-              <p className="text-xs text-amber-700 mt-0.5">
-                Current accuracy is {coords?.accuracy ? `±${coords.accuracy}m` : 'too low'}. Accuracy must be within ±100m to start journey.
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={startSharing}
-            disabled={busy}
-            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shrink-0"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Retry GPS
-          </button>
         </div>
       )}
 

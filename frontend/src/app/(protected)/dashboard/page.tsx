@@ -183,23 +183,41 @@ export default function DashboardPage() {
     setDriverMsg('');
     setJourneyBusy(true);
     try {
-      const fix = await acquireGpsFix();
-      if (!fix.coords || isNaN(fix.coords.lat) || isNaN(fix.coords.lng)) {
-        setDriverErr(fix.errorMessage || 'Cannot start journey without a verified GPS fix.');
-        return;
+      let initialCoords: { lat: number; lng: number; accuracy: number | null; speed: number | null; heading: number | null } | null = null;
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        try {
+          const pos = await new Promise<GeolocationPosition | null>((res) => {
+            navigator.geolocation.getCurrentPosition(res, () => res(null), { enableHighAccuracy: false, timeout: 3000, maximumAge: 60000 });
+            setTimeout(() => res(null), 3500);
+          });
+          if (pos) {
+            initialCoords = {
+              lat: Number(pos.coords.latitude.toFixed(7)),
+              lng: Number(pos.coords.longitude.toFixed(7)),
+              accuracy: pos.coords.accuracy != null ? Math.round(pos.coords.accuracy) : null,
+              speed: pos.coords.speed != null ? pos.coords.speed : null,
+              heading: pos.coords.heading != null ? pos.coords.heading : null,
+            };
+          }
+        } catch {
+          // ignore
+        }
       }
-      lastSentCoordsRef.current = { lat: fix.coords.lat, lng: fix.coords.lng };
-      lastSentTimeRef.current = Date.now();
+
+      const payload: Record<string, unknown> = {};
+      if (initialCoords && !isNaN(initialCoords.lat) && !isNaN(initialCoords.lng)) {
+        payload.latitude = initialCoords.lat;
+        payload.longitude = initialCoords.lng;
+        payload.accuracy = initialCoords.accuracy;
+        payload.speed = initialCoords.speed;
+        payload.heading = initialCoords.heading;
+        lastSentCoordsRef.current = { lat: initialCoords.lat, lng: initialCoords.lng };
+        lastSentTimeRef.current = Date.now();
+      }
 
       await apiFetch('/api/locations/journey/start/', {
         method: 'POST',
-        body: JSON.stringify({
-          latitude: fix.coords.lat,
-          longitude: fix.coords.lng,
-          accuracy: fix.coords.accuracy,
-          speed: fix.coords.speed,
-          heading: fix.coords.heading,
-        }),
+        body: JSON.stringify(payload),
       });
       setDriverMsg('Journey started! Live GPS sharing is now active.');
       await loadDashboard();
