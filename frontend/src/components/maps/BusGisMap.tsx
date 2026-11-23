@@ -904,7 +904,10 @@ export default function BusGisMap({
     }
   }, [breadcrumbTrail, setupBreadcrumbLayer]);
 
-  // Sync passenger location marker
+  // Track previous userPosition to fly camera when user triggers "My Location"
+  const prevUserPosRef = useRef<[number, number] | null>(null);
+
+  // Sync passenger location marker and fly to user when position first becomes available
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -922,18 +925,32 @@ export default function BusGisMap({
       userMarkerRef.current.setLngLat([userLng, userLat]);
     } else {
       const el = document.createElement('div');
-      el.className = 'passenger-location-marker';
+      el.className = 'passenger-location-marker cursor-pointer';
+      el.title = 'Your Location';
       el.innerHTML = `
-        <div style="position:relative;width:24px;height:24px;display:flex;align-items:center;justify-content:center;">
-          <div style="position:absolute;width:24px;height:24px;border-radius:9999px;background:rgba(37,99,235,0.25);animation:ping 2s cubic-bezier(0,0,0.2,1) infinite;"></div>
-          <div style="width:14px;height:14px;border-radius:9999px;background:#2563eb;border:2.5px solid #ffffff;box-shadow:0 2px 6px rgba(0,0,0,0.4);"></div>
+        <div style="position:relative;width:32px;height:32px;display:flex;align-items:center;justify-content:center;">
+          <div style="position:absolute;width:32px;height:32px;border-radius:9999px;background:rgba(37,99,235,0.3);animation:ping 2s cubic-bezier(0,0,0.2,1) infinite;"></div>
+          <div style="width:16px;height:16px;border-radius:9999px;background:#2563eb;border:3px solid #ffffff;box-shadow:0 3px 8px rgba(0,0,0,0.45);"></div>
         </div>
       `;
       userMarkerRef.current = new Marker({ element: el })
         .setLngLat([userLng, userLat])
         .addTo(map);
     }
-  }, [userPosition]);
+
+    // If user position just changed (e.g. from user clicking "My Location" or first GPS acquisition), fly camera to user
+    const prev = prevUserPosRef.current;
+    const isNewPos = !prev || Math.abs(prev[0] - userLat) > 0.0001 || Math.abs(prev[1] - userLng) > 0.0001;
+    if (isNewPos) {
+      prevUserPosRef.current = userPosition;
+      map.flyTo({
+        center: [userLng, userLat],
+        zoom: 16.2,
+        pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
+        duration: 1200,
+      });
+    }
+  }, [userPosition, is3DMode]);
 
   // Sync stops
   useEffect(() => {

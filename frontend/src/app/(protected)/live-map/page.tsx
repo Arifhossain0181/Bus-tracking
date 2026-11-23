@@ -144,13 +144,14 @@ function LiveMapContent() {
     const onPos = (pos: GeolocationPosition) => {
       setLocatingUser(false);
       setFollowingDriverId(null);
-      setUserPosition([pos.coords.latitude, pos.coords.longitude]);
+      const coords: [number, number] = [pos.coords.latitude, pos.coords.longitude];
+      setUserPosition(coords);
     };
 
     navigator.geolocation.getCurrentPosition(
       onPos,
       (err) => {
-        // Fallback for indoor / laptop Wi-Fi location
+        // Fallback for indoor / mobile cellular location
         if (err.code === 2 || err.code === 3) {
           navigator.geolocation.getCurrentPosition(
             onPos,
@@ -159,21 +160,21 @@ function LiveMapContent() {
               setLocationNotice(
                 fallbackErr.code === 1
                   ? 'Location permission denied. Please allow location in your browser settings.'
-                  : 'Unable to detect device location.'
+                  : 'Unable to detect device location. Please check phone GPS / location services.'
               );
             },
-            { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }
+            { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
           );
         } else {
           setLocatingUser(false);
           setLocationNotice(
             err.code === 1
               ? 'Location permission denied. Please allow location in your browser settings.'
-              : 'Unable to detect device location.'
+              : 'Unable to detect device location. Please enable phone GPS.'
           );
         }
       },
-      { enableHighAccuracy: true, timeout: 6000, maximumAge: 10000 }
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 }
     );
   }, []);
 
