@@ -25,7 +25,7 @@ export const GPS_FRESHNESS_THRESHOLDS = {
 } as const;
 
 export const GPS_QUALITY_THRESHOLDS = {
-  MAX_ACCEPTABLE_ACCURACY_METERS: 100,
+  MAX_ACCEPTABLE_ACCURACY_METERS: 2500, // Real-world mobile GPS / cell-tower initial fix tolerance (backend allows up to 5000m)
   HIGH_PRECISION_ACCURACY_METERS: 30,
   INITIAL_GPS_TIMEOUT_MS: 12000,
   MIN_DISPLACEMENT_METERS: 3.0,
@@ -536,82 +536,94 @@ export async function acquireGpsFix(options?: {
   }
 
   return new Promise<GpsFixResult>((resolve) => {
-    geo.getCurrentPosition(
-      (pos) => {
-        const rawCoords = {
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-        };
-        const evaluation = evaluateGpsFix(rawCoords, maxAccuracyMeters);
+    const handleSuccess = (pos: GeolocationPosition) => {
+      const rawCoords = {
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+        accuracy: pos.coords.accuracy,
+      };
+      const evaluation = evaluateGpsFix(rawCoords, maxAccuracyMeters);
 
-        const lat = Number(pos.coords.latitude.toFixed(7));
-        const lng = Number(pos.coords.longitude.toFixed(7));
-        const accuracy = pos.coords.accuracy != null ? Math.round(pos.coords.accuracy) : null;
-        const speed = pos.coords.speed != null ? pos.coords.speed : null;
-        const heading = pos.coords.heading != null ? pos.coords.heading : null;
+      const lat = Number(pos.coords.latitude.toFixed(7));
+      const lng = Number(pos.coords.longitude.toFixed(7));
+      const accuracy = pos.coords.accuracy != null ? Math.round(pos.coords.accuracy) : null;
+      const speed = pos.coords.speed != null ? pos.coords.speed : null;
+      const heading = pos.coords.heading != null ? pos.coords.heading : null;
 
-        const coords: GpsCoordinates = { lat, lng, accuracy, speed, heading };
+      const coords: GpsCoordinates = { lat, lng, accuracy, speed, heading };
 
-        if (!evaluation.isValid) {
-          resolve({
-            success: false,
-            status: evaluation.status,
-            coords,
-            errorMessage: evaluation.errorReason || 'Invalid coordinates received.',
-          });
-          return;
-        }
-
-        if (!evaluation.isAccurate) {
-          resolve({
-            success: false,
-            status: 'poor_accuracy',
-            coords,
-            errorMessage:
-              evaluation.errorReason ||
-              `GPS accuracy too low (±${accuracy}m). Please move under clear sky and retry.`,
-          });
-          return;
-        }
-
+      if (!evaluation.isValid) {
         resolve({
-          success: true,
-          status: 'acquired',
+          success: false,
+          status: evaluation.status,
           coords,
+          errorMessage: evaluation.errorReason || 'Invalid coordinates received.',
         });
-      },
+        return;
+      }
+
+      if (!evaluation.isAccurate) {
+        resolve({
+          success: false,
+          status: 'poor_accuracy',
+          coords,
+          errorMessage:
+            evaluation.errorReason ||
+            `GPS accuracy too low (±${accuracy}m). Please move under clear sky and retry.`,
+        });
+        return;
+      }
+
+      resolve({
+        success: true,
+        status: 'acquired',
+        coords,
+      });
+    };
+
+    const handleFailure = (err: GeolocationPositionError) => {
+      if (err.code === 1) {
+        resolve({
+          success: false,
+          status: 'permission_denied',
+          errorMessage:
+            'Location permission was denied. If allowed in your browser, ensure Location is ON in Windows Settings (Privacy & security > Location), or hard-refresh (Ctrl+F5).',
+        });
+      } else if (err.code === 2) {
+        resolve({
+          success: false,
+          status: 'position_unavailable',
+          errorMessage:
+            'GPS position unavailable. Ensure device location / GPS is turned on.',
+        });
+      } else if (err.code === 3) {
+        resolve({
+          success: false,
+          status: 'timeout',
+          errorMessage: `GPS acquisition timed out after ${Math.round(timeoutMs / 1000)}s. Please retry with a clear sky view.`,
+        });
+      } else {
+        resolve({
+          success: false,
+          status: 'error',
+          errorMessage: err.message || 'Unknown GPS acquisition error.',
+        });
+      }
+    };
+
+    // Attempt 1: High accuracy GPS
+    geo.getCurrentPosition(
+      handleSuccess,
       (err: GeolocationPositionError) => {
-        // GeolocationPositionError constants:
-        // 1: PERMISSION_DENIED
-        // 2: POSITION_UNAVAILABLE
-        // 3: TIMEOUT
-        if (err.code === 1) {
-          resolve({
-            success: false,
-            status: 'permission_denied',
-            errorMessage:
-              'Location permission was denied. If allowed in your browser, ensure Location is ON in Windows Settings (Privacy & security > Location), or hard-refresh (Ctrl+F5).',
-          });
-        } else if (err.code === 2) {
-          resolve({
-            success: false,
-            status: 'position_unavailable',
-            errorMessage:
-              'GPS position unavailable. Ensure device location / GPS is turned on.',
-          });
-        } else if (err.code === 3) {
-          resolve({
-            success: false,
-            status: 'timeout',
-            errorMessage: `GPS acquisition timed out after ${Math.round(timeoutMs / 1000)}s. Please retry with a clear sky view.`,
-          });
+        // If high accuracy times out or is unavailable (e.g. indoors or laptop), attempt standard accuracy fallback
+        if ((err.code === 2 || err.code === 3) && typeof window !== 'undefined') {
+          geo.getCurrentPosition(
+            handleSuccess,
+            handleFailure,
+            { enableHighAccuracy: false, timeout: Math.max(5000, timeoutMs / 2), maximumAge: 30000 }
+          );
         } else {
-          resolve({
-            success: false,
-            status: 'error',
-            errorMessage: err.message || 'Unknown GPS acquisition error.',
-          });
+          handleFailure(err);
         }
       },
       {

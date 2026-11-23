@@ -184,7 +184,7 @@ export default function DashboardPage() {
     setJourneyBusy(true);
     try {
       const fix = await acquireGpsFix();
-      if (!fix.success || !fix.coords) {
+      if (!fix.coords || isNaN(fix.coords.lat) || isNaN(fix.coords.lng)) {
         setDriverErr(fix.errorMessage || 'Cannot start journey without a verified GPS fix.');
         return;
       }

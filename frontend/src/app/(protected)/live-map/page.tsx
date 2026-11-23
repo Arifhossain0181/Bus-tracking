@@ -120,17 +120,63 @@ function LiveMapContent() {
     return undefined;
   }, [plannedRoadGeometry, routeStops]);
 
-  const locateMe = () => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+  const [locatingUser, setLocatingUser] = useState(false);
+  const [locationNotice, setLocationNotice] = useState('');
+
+  const locateMe = useCallback(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setLocationNotice('Geolocation is not supported by your browser.');
+      return;
+    }
+    setLocatingUser(true);
+    setLocationNotice('');
+
+    const onPos = (pos: GeolocationPosition) => {
+      setLocatingUser(false);
+      setFollowingDriverId(null);
+      setUserPosition([pos.coords.latitude, pos.coords.longitude]);
+    };
+
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setFollowingDriverId(null);
-        setUserPosition([pos.coords.latitude, pos.coords.longitude]);
+      onPos,
+      (err) => {
+        // Fallback for indoor / laptop Wi-Fi location
+        if (err.code === 2 || err.code === 3) {
+          navigator.geolocation.getCurrentPosition(
+            onPos,
+            (fallbackErr) => {
+              setLocatingUser(false);
+              setLocationNotice(
+                fallbackErr.code === 1
+                  ? 'Location permission denied. Please allow location in your browser settings.'
+                  : 'Unable to detect device location.'
+              );
+            },
+            { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }
+          );
+        } else {
+          setLocatingUser(false);
+          setLocationNotice(
+            err.code === 1
+              ? 'Location permission denied. Please allow location in your browser settings.'
+              : 'Unable to detect device location.'
+          );
+        }
       },
-      () => {},
-      { enableHighAccuracy: true }
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 10000 }
     );
-  };
+  }, []);
+
+  // Auto-detect user position on mount for live passenger marker
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => setUserPosition([pos.coords.latitude, pos.coords.longitude]),
+        () => {},
+        { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
+      );
+    }
+  }, []);
 
   const totalBusesCount = drivers.length > 0 ? drivers.length : busesList.length;
 
@@ -169,10 +215,11 @@ function LiveMapContent() {
           <button
             type="button"
             onClick={locateMe}
+            disabled={locatingUser}
             className="px-3 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-50 inline-flex items-center gap-1.5"
           >
-            <Crosshair className="w-4 h-4 text-blue-600" />
-            My Location
+            <Crosshair className={`w-4 h-4 text-blue-600 ${locatingUser ? 'animate-spin' : ''}`} />
+            {locatingUser ? 'Locating...' : 'My Location'}
           </button>
 
           <button
@@ -185,6 +232,13 @@ function LiveMapContent() {
           </button>
         </div>
       </div>
+
+      {locationNotice && (
+        <div className="px-4 py-2 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl flex items-center justify-between">
+          <span>{locationNotice}</span>
+          <button type="button" onClick={() => setLocationNotice('')} className="font-bold ml-2 hover:text-amber-950">×</button>
+        </div>
+      )}
 
       {/* Main Map Layout */}
       <div className={`grid gap-4 transition-all ${isCinematic ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-4'}`}>

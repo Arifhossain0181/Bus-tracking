@@ -145,7 +145,7 @@ export default function ShareLocationPage() {
     try {
       const fix = await acquireGpsFix();
 
-      if (!fix.success || !fix.coords) {
+      if (!fix.coords || isNaN(fix.coords.lat) || isNaN(fix.coords.lng)) {
         setGpsState(fix.status);
         setError(fix.errorMessage || 'Unable to obtain a verified GPS fix.');
         return;
