@@ -19,6 +19,12 @@ const LiveMapView = dynamic(() => import('@/components/maps/LiveMapView'), {
   ),
 });
 
+interface NearestBusInfo {
+  id: number;
+  busNumber: string;
+  distMeters: number;
+}
+
 function LiveMapContent() {
   const searchParams = useSearchParams();
   const initialDriverId = searchParams.get('driver_id') ? Number(searchParams.get('driver_id')) : null;
@@ -69,12 +75,12 @@ function LiveMapContent() {
   }, [fetchData]);
 
   // Find the bus closest to the user's current GPS position
-  const nearestBus = useMemo(() => {
+  const nearestBus = useMemo<NearestBusInfo | null>(() => {
     if (!userPosition || !isValidCoordinate(userPosition[0], userPosition[1])) return null;
     const [uLat, uLng] = userPosition;
 
     let closestDist = Infinity;
-    let closestItem: { id: number; busNumber: string; distMeters: number } | null = null;
+    let closestItem: NearestBusInfo | null = null;
 
     // 1. Check live drivers
     drivers.forEach((d) => {
@@ -114,7 +120,7 @@ function LiveMapContent() {
 
   // Auto-focus nearest bus when user position arrives (only if user hasn't manually selected one yet)
   useEffect(() => {
-    if (nearestBus && !hasUserSelectedBusRef.current && focusedDriverId == null) {
+    if (nearestBus != null && !hasUserSelectedBusRef.current && focusedDriverId == null) {
       setFocusedDriverId(nearestBus.id);
       setFollowingDriverId(nearestBus.id);
     }

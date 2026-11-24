@@ -279,7 +279,7 @@ export default function BusGisMap({
     } else if (selectedBusId == null && buses.length > 0) {
       setSelectedBusId(buses[0].id);
     }
-  }, [focusedBusId, buses, is3DMode]);
+  }, [focusedBusId, buses, is3DMode, selectedBusId]);
 
   // Active planned route path - strictly authentic road geometry
   const activeRoadPath = useMemo(() => {
