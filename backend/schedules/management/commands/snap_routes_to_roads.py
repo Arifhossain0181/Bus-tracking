@@ -56,10 +56,23 @@ class Command(BaseCommand):
                 continue
 
             waypoints = [(float(s.latitude), float(s.longitude)) for s in stops]
-            self.stdout.write(f"Calculating road route for '{route.name}' (ID: {route.id}) via {len(waypoints)} waypoints...")
+
+            # Deduplicate sequential or identical waypoints
+            deduped_waypoints = []
+            for wp in waypoints:
+                if not deduped_waypoints or (abs(wp[0] - deduped_waypoints[-1][0]) > 0.0001 or abs(wp[1] - deduped_waypoints[-1][1]) > 0.0001):
+                    deduped_waypoints.append(wp)
+
+            if len(deduped_waypoints) < 2:
+                self.stdout.write(
+                    self.style.WARNING(f"Skipping route {route.id} ('{route.name}'): requires at least 2 distinct stop coordinates (found {len(deduped_waypoints)})")
+                )
+                continue
+
+            self.stdout.write(f"Calculating road route for '{route.name}' (ID: {route.id}) via {len(deduped_waypoints)} waypoints...")
 
             try:
-                result = generate_route_geometry(waypoints=waypoints)
+                result = generate_route_geometry(waypoints=deduped_waypoints)
                 coords = result.geometry.get('coordinates', [])
                 dist_km = Decimal(str(round(result.distance_meters / 1000.0, 2)))
                 duration_mins = max(1, round(result.duration_seconds / 60))
