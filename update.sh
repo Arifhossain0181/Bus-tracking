@@ -23,9 +23,14 @@ python manage.py collectstatic --noinput
 
 # 3. Frontend updates
 echo "[3/4] Updating Frontend (Dependencies & Rebuilding Next.js)..."
+# Stop running frontend to release locks on .next directory
+pkill -9 -u dsriubatac -f "next-server" 2>/dev/null || true
+pkill -9 -u dsriubatac -f "node.*next" 2>/dev/null || true
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 cd /home/dsriubatac/Bus-tracking/frontend
+# Wipe stale cache and compiled chunks to guarantee fresh hash manifests
+rm -rf .next
 npm install --silent
 npm run build
 
@@ -34,10 +39,10 @@ echo "[4/4] Restarting Services in persistent background mode..."
 if [ -d "/home/dsriubatac/ubus.dsr.iubat.ac.bd" ]; then
   cat << 'EOF' > /home/dsriubatac/ubus.dsr.iubat.ac.bd/.htaccess
 RewriteEngine On
-RewriteRule ^api/(.*)$ http://127.0.0.1:8000/api/$1 [P,L]
-RewriteRule ^admin/(.*)$ http://127.0.0.1:8000/admin/$1 [P,L]
+RewriteRule ^api/(.*)$ http://127.0.0.1:8000/api/$1 [P,L,QSA]
+RewriteRule ^admin/(.*)$ http://127.0.0.1:8000/admin/$1 [P,L,QSA]
 RewriteRule ^django-static/(.*)$ http://127.0.0.1:8000/static/$1 [P,L]
-RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L]
+RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L,QSA]
 EOF
   chmod 644 /home/dsriubatac/ubus.dsr.iubat.ac.bd/.htaccess
 fi

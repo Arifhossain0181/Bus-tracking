@@ -10,10 +10,10 @@ HTACCESS_PATH="/home/dsriubatac/ubus.dsr.iubat.ac.bd/.htaccess"
 if [ -d "/home/dsriubatac/ubus.dsr.iubat.ac.bd" ]; then
   cat << 'EOF' > "$HTACCESS_PATH"
 RewriteEngine On
-RewriteRule ^api/(.*)$ http://127.0.0.1:8000/api/$1 [P,L]
-RewriteRule ^admin/(.*)$ http://127.0.0.1:8000/admin/$1 [P,L]
+RewriteRule ^api/(.*)$ http://127.0.0.1:8000/api/$1 [P,L,QSA]
+RewriteRule ^admin/(.*)$ http://127.0.0.1:8000/admin/$1 [P,L,QSA]
 RewriteRule ^django-static/(.*)$ http://127.0.0.1:8000/static/$1 [P,L]
-RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L]
+RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L,QSA]
 EOF
   chmod 644 "$HTACCESS_PATH"
   echo "Clean .htaccess written successfully."
