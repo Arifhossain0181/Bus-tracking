@@ -32,26 +32,10 @@ npm run build
 echo "[4/4] Restarting Services in persistent background mode..."
 if [ -d "/home/dsriubatac/ubus.dsr.iubat.ac.bd" ]; then
   cat << 'EOF' > /home/dsriubatac/ubus.dsr.iubat.ac.bd/.htaccess
-<IfModule mod_passenger.c>
-  PassengerEnabled off
-</IfModule>
-
-<IfModule mod_headers.c>
-  RequestHeader set X-Forwarded-Proto "https" env=HTTPS
-</IfModule>
-
 RewriteEngine On
-RewriteBase /
-
-# 1. Django API & Admin -> port 8000
 RewriteRule ^api/(.*)$ http://127.0.0.1:8000/api/$1 [P,L]
 RewriteRule ^admin/(.*)$ http://127.0.0.1:8000/admin/$1 [P,L]
 RewriteRule ^django-static/(.*)$ http://127.0.0.1:8000/static/$1 [P,L]
-
-# 2. Next.js Frontend -> port 3000
-RewriteCond %{REQUEST_URI} !^/api/
-RewriteCond %{REQUEST_URI} !^/admin/
-RewriteCond %{REQUEST_URI} !^/django-static/
 RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L]
 EOF
   chmod 644 /home/dsriubatac/ubus.dsr.iubat.ac.bd/.htaccess
