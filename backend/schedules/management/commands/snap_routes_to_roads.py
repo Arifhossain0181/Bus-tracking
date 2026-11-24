@@ -35,13 +35,6 @@ class Command(BaseCommand):
             return
 
         for route in routes:
-            stops = list(route.stops.order_by('order'))
-            if len(stops) < 2:
-                self.stdout.write(
-                    self.style.WARNING(f"Skipping route {route.id} ('{route.name}'): requires at least 2 stops (found {len(stops)})")
-                )
-                continue
-
             active_rev = route.active_revision
             existing_coords = []
             if active_rev and active_rev.geometry:
@@ -55,7 +48,13 @@ class Command(BaseCommand):
                 )
                 continue
 
-            waypoints = [(float(s.latitude), float(s.longitude)) for s in stops]
+            stops = list(route.stops.order_by('order'))
+            waypoints = []
+            if len(stops) >= 2:
+                waypoints = [(float(s.latitude), float(s.longitude)) for s in stops]
+            elif len(existing_coords) >= 2:
+                # Use endpoints from existing geometry: GeoJSON [lng, lat] -> Routing (lat, lng)
+                waypoints = [(float(pt[1]), float(pt[0])) for pt in existing_coords]
 
             # Deduplicate sequential or identical waypoints
             deduped_waypoints = []
