@@ -44,6 +44,14 @@ chmod +x /home/dsriubatac/Bus-tracking/keepalive.sh 2>/dev/null || true
 chmod +x /home/dsriubatac/Bus-tracking/start_services.sh 2>/dev/null || true
 bash /home/dsriubatac/Bus-tracking/start_services.sh
 
+# Setup convenient 1-word aliases in ~/.bashrc if not already present
+if [ -f "$HOME/.bashrc" ] && ! grep -q "alias deploy=" "$HOME/.bashrc" 2>/dev/null; then
+  echo "alias deploy='bash /home/dsriubatac/Bus-tracking/update.sh'" >> "$HOME/.bashrc"
+  echo "alias ubus-update='bash /home/dsriubatac/Bus-tracking/update.sh'" >> "$HOME/.bashrc"
+fi
+ln -sf /home/dsriubatac/Bus-tracking/update.sh /home/dsriubatac/deploy.sh 2>/dev/null || true
+ln -sf /home/dsriubatac/Bus-tracking/update.sh /home/dsriubatac/update.sh 2>/dev/null || true
+
 echo "==========================================="
 echo "   UBus Deployment Completed Successfully! "
 echo "==========================================="
