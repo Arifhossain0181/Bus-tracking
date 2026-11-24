@@ -21,6 +21,9 @@ export interface BusPopupData {
   routeName?: string;
   status: 'live' | 'moving' | 'stopped' | 'stale' | 'offline';
   lastUpdated: string;
+  currentLocationName?: string;
+  userDistanceKm?: number | null;
+  userTravelMinutes?: number | null;
 }
 
 interface BusMarkerPopupProps {
@@ -88,6 +91,39 @@ export default function BusMarkerPopup({
 
       {/* Information Rows */}
       <div className="space-y-2 py-1">
+        {/* User-to-Bus Guidance Distance & Travel Time */}
+        {data.userDistanceKm != null && (
+          <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 rounded-xl">
+            <span className="text-amber-300 font-bold flex items-center gap-1.5 text-[11px]">
+              <Navigation className="w-3.5 h-3.5 text-amber-400" />
+              From You:
+            </span>
+            <span className="font-extrabold text-amber-300 text-[11px]">
+              {data.userDistanceKm < 1
+                ? `${Math.round(data.userDistanceKm * 1000)}m away`
+                : `${data.userDistanceKm.toFixed(1)} km away`}
+              {data.userTravelMinutes != null && (
+                <span className="text-white font-normal ml-1">
+                  (~{data.userTravelMinutes} min)
+                </span>
+              )}
+            </span>
+          </div>
+        )}
+
+        {/* Current Location / Landmark */}
+        {data.currentLocationName && (
+          <div className="flex items-center justify-between">
+            <span className="text-slate-400 flex items-center gap-1.5">
+              <MapPin className="w-3.5 h-3.5 text-emerald-400" />
+              Current Area:
+            </span>
+            <span className="font-bold text-emerald-300 text-right truncate max-w-[140px]" title={data.currentLocationName}>
+              {data.currentLocationName}
+            </span>
+          </div>
+        )}
+
         {/* Route */}
         <div className="flex items-center justify-between">
           <span className="text-slate-400 flex items-center gap-1.5">

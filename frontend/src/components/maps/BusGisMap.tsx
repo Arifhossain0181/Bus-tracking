@@ -172,6 +172,7 @@ export default function BusGisMap({
   const threeLayerRef = useRef<ThreeMap3DLayer | null>(null);
   const busMarkersRef = useRef<Map<number, Marker>>(new Map());
   const userMarkerRef = useRef<Marker | null>(null);
+  const userToBusMarkerRef = useRef<Marker | null>(null);
   const breadcrumbTrailRef = useRef(breadcrumbTrail);
   breadcrumbTrailRef.current = breadcrumbTrail;
 
@@ -230,12 +231,17 @@ export default function BusGisMap({
   const busesRef = useRef(buses);
   busesRef.current = buses;
 
-  // Open bus popup and smoothly fly camera to selected bus
+  // Open bus popup and smoothly frame both user and selected bus
   const handleBusClick = useCallback(
     (bus: ActiveBusData) => {
       setSelectedBusId(bus.id);
-      setIsFollowing(true);
+      setIsFollowing(false);
       onSelectBus?.(bus.id);
+
+      const locName = stops.length > 0
+        ? getCurrentLocationName(bus.longitude, bus.latitude, stops)
+        : bus.routeName || routeName;
+
       setPopupBusData({
         id: bus.id,
         busNumber: bus.busNumber,
@@ -248,38 +254,144 @@ export default function BusGisMap({
           bus.status ||
           (bus.speed && bus.speed > 1 ? 'moving' : bus.speed != null ? 'stopped' : 'live'),
         lastUpdated: bus.lastUpdated ? new Date(bus.lastUpdated).toLocaleTimeString() : 'Just now',
+        currentLocationName: locName,
+        userDistanceKm,
+        userTravelMinutes,
       });
 
       const map = mapRef.current;
       if (map && isValidCoordinate(bus.latitude, bus.longitude)) {
+        if (userPosition && isValidCoordinate(userPosition[0], userPosition[1])) {
+          const [uLat, uLng] = userPosition;
+          const minLng = Math.min(uLng, bus.longitude);
+          const maxLng = Math.max(uLng, bus.longitude);
+          const minLat = Math.min(uLat, bus.latitude);
+          const maxLat = Math.max(uLat, bus.latitude);
+          const distMeters = calculateDistanceMeters(uLat, uLng, bus.latitude, bus.longitude);
+
+          if (distMeters < 250) {
+            map.flyTo({
+              center: [bus.longitude, bus.latitude],
+              zoom: 16.5,
+              pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
+              duration: 1000,
+            });
+          } else {
+            map.fitBounds(
+              [
+                [minLng, minLat],
+                [maxLng, maxLat],
+              ],
+              {
+                padding: { top: 140, bottom: 140, left: 90, right: 90 },
+                maxZoom: 16.5,
+                duration: 1200,
+              }
+            );
+          }
+        } else {
+          map.flyTo({
+            center: [bus.longitude, bus.latitude],
+            zoom: 16.5,
+            pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
+            duration: 1000,
+          });
+        }
+      }
+    },
+    [onSelectBus, is3DMode, stops, routeName, userDistanceKm, userTravelMinutes, userPosition]
+  );
+
+  // Smoothly frames both user and selected bus to view guidance path
+  const handleFitUserAndBus = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || !selectedBus) return;
+    setIsFollowing(false);
+    if (userPosition && isValidCoordinate(userPosition[0], userPosition[1])) {
+      const [uLat, uLng] = userPosition;
+      const minLng = Math.min(uLng, selectedBus.longitude);
+      const maxLng = Math.max(uLng, selectedBus.longitude);
+      const minLat = Math.min(uLat, selectedBus.latitude);
+      const maxLat = Math.max(uLat, selectedBus.latitude);
+      const distMeters = calculateDistanceMeters(uLat, uLng, selectedBus.latitude, selectedBus.longitude);
+
+      if (distMeters < 250) {
         map.flyTo({
-          center: [bus.longitude, bus.latitude],
+          center: [selectedBus.longitude, selectedBus.latitude],
           zoom: 16.5,
           pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
           duration: 1000,
         });
+      } else {
+        map.fitBounds(
+          [
+            [minLng, minLat],
+            [maxLng, maxLat],
+          ],
+          {
+            padding: { top: 140, bottom: 140, left: 90, right: 90 },
+            maxZoom: 16.5,
+            duration: 1200,
+          }
+        );
       }
-    },
-    [onSelectBus, is3DMode]
-  );
+    } else {
+      map.flyTo({
+        center: [selectedBus.longitude, selectedBus.latitude],
+        zoom: 16.5,
+        pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
+        duration: 1000,
+      });
+    }
+  }, [selectedBus, userPosition, is3DMode]);
 
-  // Sync selected bus from props and fly to it, or default to first bus
+  // Sync selected bus from props and fly/frame it, or default to first bus
   useEffect(() => {
     if (focusedBusId != null) {
       setSelectedBusId(focusedBusId);
       const targetBus = buses.find((b) => b.id === focusedBusId);
       if (targetBus && mapRef.current && isValidCoordinate(targetBus.latitude, targetBus.longitude)) {
-        mapRef.current.flyTo({
-          center: [targetBus.longitude, targetBus.latitude],
-          zoom: 16.5,
-          pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
-          duration: 1000,
-        });
+        if (userPosition && isValidCoordinate(userPosition[0], userPosition[1])) {
+          const [uLat, uLng] = userPosition;
+          const minLng = Math.min(uLng, targetBus.longitude);
+          const maxLng = Math.max(uLng, targetBus.longitude);
+          const minLat = Math.min(uLat, targetBus.latitude);
+          const maxLat = Math.max(uLat, targetBus.latitude);
+          const distMeters = calculateDistanceMeters(uLat, uLng, targetBus.latitude, targetBus.longitude);
+
+          if (distMeters < 250) {
+            mapRef.current.flyTo({
+              center: [targetBus.longitude, targetBus.latitude],
+              zoom: 16.5,
+              pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
+              duration: 1000,
+            });
+          } else {
+            mapRef.current.fitBounds(
+              [
+                [minLng, minLat],
+                [maxLng, maxLat],
+              ],
+              {
+                padding: { top: 140, bottom: 140, left: 90, right: 90 },
+                maxZoom: 16.5,
+                duration: 1200,
+              }
+            );
+          }
+        } else {
+          mapRef.current.flyTo({
+            center: [targetBus.longitude, targetBus.latitude],
+            zoom: 16.5,
+            pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
+            duration: 1000,
+          });
+        }
       }
     } else if (selectedBusId == null && buses.length > 0) {
       setSelectedBusId(buses[0].id);
     }
-  }, [focusedBusId, buses, is3DMode, selectedBusId]);
+  }, [focusedBusId, buses, is3DMode, selectedBusId, userPosition]);
 
   // Active planned route path - strictly authentic road geometry
   const activeRoadPath = useMemo(() => {
@@ -578,6 +690,123 @@ export default function BusGisMap({
     }
   }, []);
 
+  // Dedicated User-to-Selected-Bus Navigation Guidance Path Layer & Midpoint Distance Badge
+  const setupUserToBusLayer = useCallback(
+    (
+      map: MapLibreMap,
+      userPos: [number, number] | null,
+      busPos: [number, number] | null,
+      distanceKm: number | null,
+      travelMinutes: number | null
+    ) => {
+      const hasCoords =
+        userPos &&
+        busPos &&
+        isValidCoordinate(userPos[0], userPos[1]) &&
+        isValidCoordinate(busPos[1], busPos[0]);
+
+      const lineCoords: [number, number][] = hasCoords
+        ? [
+            [userPos[1], userPos[0]], // [longitude, latitude]
+            [busPos[0], busPos[1]],   // [longitude, latitude]
+          ]
+        : [];
+
+      const geojson: GeoJSON.FeatureCollection<GeoJSON.LineString> = {
+        type: 'FeatureCollection',
+        features:
+          lineCoords.length === 2
+            ? [
+                {
+                  type: 'Feature',
+                  properties: {},
+                  geometry: {
+                    type: 'LineString',
+                    coordinates: lineCoords,
+                  },
+                },
+              ]
+            : [],
+      };
+
+      const source = map.getSource('user-to-bus-source') as GeoJSONSource | undefined;
+      if (source) {
+        source.setData(geojson);
+      } else if (!map.getSource('user-to-bus-source')) {
+        map.addSource('user-to-bus-source', {
+          type: 'geojson',
+          data: geojson,
+        });
+      }
+
+      if (!map.getLayer('user-to-bus-glow')) {
+        map.addLayer({
+          id: 'user-to-bus-glow',
+          type: 'line',
+          source: 'user-to-bus-source',
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: {
+            'line-color': '#f59e0b',
+            'line-width': 10,
+            'line-opacity': 0.38,
+            'line-blur': 4,
+          },
+        });
+      }
+
+      if (!map.getLayer('user-to-bus-core')) {
+        map.addLayer({
+          id: 'user-to-bus-core',
+          type: 'line',
+          source: 'user-to-bus-source',
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: {
+            'line-color': '#fbbf24',
+            'line-width': 3.5,
+            'line-dasharray': [2, 2],
+            'line-opacity': 0.95,
+          },
+        });
+      }
+
+      // Midpoint badge marker showing distance and travel time
+      if (hasCoords && distanceKm != null) {
+        const midLng = (userPos[1] + busPos[0]) / 2;
+        const midLat = (userPos[0] + busPos[1]) / 2;
+        const distStr =
+          distanceKm < 1 ? `${Math.round(distanceKm * 1000)}m` : `${distanceKm.toFixed(1)} km`;
+        const timeStr = travelMinutes != null ? `~${travelMinutes} min` : '';
+
+        if (userToBusMarkerRef.current) {
+          userToBusMarkerRef.current.setLngLat([midLng, midLat]);
+          const el = userToBusMarkerRef.current.getElement();
+          const distSpan = el.querySelector('.ub-dist');
+          if (distSpan) distSpan.textContent = `🚶 ${distStr}`;
+          const timeSpan = el.querySelector('.ub-time');
+          if (timeSpan) timeSpan.textContent = timeStr;
+        } else {
+          const el = document.createElement('div');
+          el.className = 'user-to-bus-midpoint-pill';
+          el.style.cssText =
+            'background:rgba(15,23,42,0.92);backdrop-filter:blur(12px);border:1.5px solid rgba(245,158,11,0.8);box-shadow:0 6px 20px rgba(0,0,0,0.55),0 0 12px rgba(245,158,11,0.3);border-radius:9999px;padding:4px 10px;color:#fbbf24;font-family:system-ui,-apple-system,sans-serif;font-size:11px;font-weight:800;display:flex;align-items:center;gap:6px;white-space:nowrap;cursor:default;user-select:none;pointer-events:none;';
+          el.innerHTML = `
+            <span class="ub-dist">🚶 ${distStr}</span>
+            ${timeStr ? `<span style="color:#ffffff;opacity:0.4;">•</span><span class="ub-time" style="color:#ffffff;">${timeStr}</span>` : ''}
+          `;
+          userToBusMarkerRef.current = new Marker({ element: el })
+            .setLngLat([midLng, midLat])
+            .addTo(map);
+        }
+      } else {
+        if (userToBusMarkerRef.current) {
+          userToBusMarkerRef.current.remove();
+          userToBusMarkerRef.current = null;
+        }
+      }
+    },
+    []
+  );
+
   // Station/Stop Markers with sequence numbering
   const setupStopMarkers = useCallback((map: MapLibreMap, stopList: StopInfo[]) => {
     if (stopList.length === 0) return;
@@ -718,6 +947,15 @@ export default function BusGisMap({
 
       // 5. Add Dedicated Historical Breadcrumb Layer
       setupBreadcrumbLayer(map, breadcrumbTrailRef.current || []);
+
+      // 6. Add User-to-Selected-Bus Guidance Route Layer
+      setupUserToBusLayer(
+        map,
+        userPosition,
+        selectedBus ? [selectedBus.longitude, selectedBus.latitude] : null,
+        userDistanceKm,
+        userTravelMinutes
+      );
     });
 
     // Auto-disable follow lock if user interacts with the map (pan, touch, zoom, rotate)
@@ -754,6 +992,10 @@ export default function BusGisMap({
       if (userMarkerRef.current) {
         userMarkerRef.current.remove();
         userMarkerRef.current = null;
+      }
+      if (userToBusMarkerRef.current) {
+        userToBusMarkerRef.current.remove();
+        userToBusMarkerRef.current = null;
       }
       map.remove();
       mapRef.current = null;
@@ -958,6 +1200,20 @@ export default function BusGisMap({
     }
   }, [breadcrumbTrail, setupBreadcrumbLayer]);
 
+  // Sync User-to-Bus guidance route layer and midpoint badge
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map && map.isStyleLoaded()) {
+      setupUserToBusLayer(
+        map,
+        userPosition,
+        selectedBus ? [selectedBus.longitude, selectedBus.latitude] : null,
+        userDistanceKm,
+        userTravelMinutes
+      );
+    }
+  }, [userPosition, selectedBus, userDistanceKm, userTravelMinutes, setupUserToBusLayer]);
+
   // Track previous userPosition to fly camera when user triggers "My Location"
   const prevUserPosRef = useRef<[number, number] | null>(null);
 
@@ -992,19 +1248,48 @@ export default function BusGisMap({
         .addTo(map);
     }
 
-    // If user position just changed (e.g. from user clicking "My Location" or first GPS acquisition), fly camera to user
+    // If user position just changed (e.g. from user clicking "My Location" or first GPS acquisition), frame both user and bus
     const prev = prevUserPosRef.current;
     const isNewPos = !prev || Math.abs(prev[0] - userLat) > 0.0001 || Math.abs(prev[1] - userLng) > 0.0001;
     if (isNewPos) {
       prevUserPosRef.current = userPosition;
-      map.flyTo({
-        center: [userLng, userLat],
-        zoom: 16.2,
-        pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
-        duration: 1200,
-      });
+      if (selectedBus && isValidCoordinate(selectedBus.latitude, selectedBus.longitude)) {
+        const minLng = Math.min(userLng, selectedBus.longitude);
+        const maxLng = Math.max(userLng, selectedBus.longitude);
+        const minLat = Math.min(userLat, selectedBus.latitude);
+        const maxLat = Math.max(userLat, selectedBus.latitude);
+        const distMeters = calculateDistanceMeters(userLat, userLng, selectedBus.latitude, selectedBus.longitude);
+
+        if (distMeters < 250) {
+          map.flyTo({
+            center: [selectedBus.longitude, selectedBus.latitude],
+            zoom: 16.5,
+            pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
+            duration: 1000,
+          });
+        } else {
+          map.fitBounds(
+            [
+              [minLng, minLat],
+              [maxLng, maxLat],
+            ],
+            {
+              padding: { top: 140, bottom: 140, left: 90, right: 90 },
+              maxZoom: 16.5,
+              duration: 1200,
+            }
+          );
+        }
+      } else {
+        map.flyTo({
+          center: [userLng, userLat],
+          zoom: 16.2,
+          pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
+          duration: 1200,
+        });
+      }
     }
-  }, [userPosition, is3DMode]);
+  }, [userPosition, is3DMode, selectedBus]);
 
   // Sync stops
   useEffect(() => {
@@ -1222,6 +1507,7 @@ export default function BusGisMap({
           }
           isFollowing={isFollowing}
           onToggleFollow={handleToggleFollow}
+          onFitUserAndBus={handleFitUserAndBus}
         />
       )}
 

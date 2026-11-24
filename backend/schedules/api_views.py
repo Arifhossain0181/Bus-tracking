@@ -362,9 +362,9 @@ def route_generate_geometry_api(request, pk=None):
     Restricted to administrators and transit authorities.
     Does NOT save, publish, or mutate Route or RouteRevision database records.
     """
-    if not (request.user.is_admin_user or request.user.is_authority):
+    if pk is not None and not (request.user.is_admin_user or request.user.is_authority):
         return Response(
-            {'error': 'Only administrators and authorities can generate route geometry.'},
+            {'error': 'Only administrators and authorities can modify route geometry.'},
             status=status.HTTP_403_FORBIDDEN
         )
 
