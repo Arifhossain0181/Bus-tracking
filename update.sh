@@ -17,6 +17,7 @@ cd /home/dsriubatac/Bus-tracking/backend
 source venv/bin/activate
 pip install -r requirements.txt --quiet
 python manage.py migrate --noinput
+python manage.py seed_production_routes
 python manage.py snap_routes_to_roads
 python manage.py collectstatic --noinput
 
