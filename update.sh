@@ -33,6 +33,7 @@ echo "[4/4] Restarting Services in persistent background mode..."
 if [ -f "/home/dsriubatac/ubus.dsr.iubat.ac.bd/.htaccess" ]; then
   sed -i 's/8001/8000/g' /home/dsriubatac/ubus.dsr.iubat.ac.bd/.htaccess
 fi
+chmod +x /home/dsriubatac/Bus-tracking/keepalive.sh 2>/dev/null || true
 chmod +x /home/dsriubatac/Bus-tracking/start_services.sh 2>/dev/null || true
 bash /home/dsriubatac/Bus-tracking/start_services.sh
 
