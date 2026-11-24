@@ -1,12 +1,13 @@
 'use client';
 
-import React, { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useSearchParams } from 'next/navigation';
 import { Bus as BusIcon, Crosshair, Maximize2, Minimize2, Navigation, RefreshCw, Sparkles } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import type { ActiveDriverLocation, Bus, RouteItem } from '@/lib/types';
 import type { StopInfo } from '@/lib/map3d/routeGeometry';
+import { calculateDistanceMeters, isValidCoordinate } from '@/lib/trackingStatus';
 
 const LiveMapView = dynamic(() => import('@/components/maps/LiveMapView'), {
   ssr: false,
@@ -31,6 +32,7 @@ function LiveMapContent() {
   const [userPosition, setUserPosition] = useState<[number, number] | null>(null);
   const [loading, setLoading] = useState(true);
   const [isCinematic, setIsCinematic] = useState(true);
+  const hasUserSelectedBusRef = useRef(false);
 
   // Load telemetry, fleet buses, and routes in parallel
   const fetchData = useCallback(async () => {
@@ -66,45 +68,165 @@ function LiveMapContent() {
     return () => clearInterval(timer);
   }, [fetchData]);
 
-  // Determine active route and its stops for the selected bus
+  // Find the bus closest to the user's current GPS position
+  const nearestBus = useMemo(() => {
+    if (!userPosition || !isValidCoordinate(userPosition[0], userPosition[1])) return null;
+    const [uLat, uLng] = userPosition;
+
+    let closestDist = Infinity;
+    let closestItem: { id: number; busNumber: string; distMeters: number } | null = null;
+
+    // 1. Check live drivers
+    drivers.forEach((d) => {
+      const lat = Number(d.latitude);
+      const lng = Number(d.longitude);
+      if (isValidCoordinate(lat, lng)) {
+        const dist = calculateDistanceMeters(uLat, uLng, lat, lng);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closestItem = {
+            id: d.driver_id,
+            busNumber: d.bus_number ? `Bus #${d.bus_number}` : 'Live Bus',
+            distMeters: dist,
+          };
+        }
+      }
+    });
+
+    // 2. Check fleet buses
+    busesList.forEach((b) => {
+      const loc = b.latest_location;
+      if (loc && isValidCoordinate(Number(loc.latitude), Number(loc.longitude))) {
+        const dist = calculateDistanceMeters(uLat, uLng, Number(loc.latitude), Number(loc.longitude));
+        if (dist < closestDist) {
+          closestDist = dist;
+          closestItem = {
+            id: b.id + 10000,
+            busNumber: `Bus #${b.bus_number}`,
+            distMeters: dist,
+          };
+        }
+      }
+    });
+
+    return closestItem;
+  }, [userPosition, drivers, busesList]);
+
+  // Auto-focus nearest bus when user position arrives (only if user hasn't manually selected one yet)
+  useEffect(() => {
+    if (nearestBus && !hasUserSelectedBusRef.current && focusedDriverId == null) {
+      setFocusedDriverId(nearestBus.id);
+      setFollowingDriverId(nearestBus.id);
+    }
+  }, [nearestBus, focusedDriverId]);
+
+  // Unified list of all selectable buses with distance from user
+  const allSelectableBuses = useMemo(() => {
+    const list: Array<{
+      id: number;
+      busNumber: string;
+      routeName: string;
+      driverName: string;
+      isLive: boolean;
+      distanceKm: number | null;
+    }> = [];
+
+    const seenBusNumbers = new Set<string>();
+
+    // 1. Live drivers
+    drivers.forEach((d) => {
+      const lat = Number(d.latitude);
+      const lng = Number(d.longitude);
+      let distKm: number | null = null;
+      if (userPosition && isValidCoordinate(userPosition[0], userPosition[1]) && isValidCoordinate(lat, lng)) {
+        distKm = calculateDistanceMeters(userPosition[0], userPosition[1], lat, lng) / 1000;
+      }
+      const bNum = d.bus_number ? `Bus #${d.bus_number}` : `Bus #${d.driver_id}`;
+      seenBusNumbers.add(d.bus_number || String(d.driver_id));
+      list.push({
+        id: d.driver_id,
+        busNumber: bNum,
+        routeName: d.route_name || 'IUBAT Transit Line',
+        driverName: d.driver_name,
+        isLive: true,
+        distanceKm: distKm,
+      });
+    });
+
+    // 2. Fleet buses
+    busesList.forEach((b) => {
+      if (seenBusNumbers.has(b.bus_number) || seenBusNumbers.has(String(b.id))) return;
+      const loc = b.latest_location;
+      let distKm: number | null = null;
+      if (
+        userPosition &&
+        isValidCoordinate(userPosition[0], userPosition[1]) &&
+        loc &&
+        isValidCoordinate(Number(loc.latitude), Number(loc.longitude))
+      ) {
+        distKm = calculateDistanceMeters(userPosition[0], userPosition[1], Number(loc.latitude), Number(loc.longitude)) / 1000;
+      }
+      const bNum = `Bus #${b.bus_number}`;
+      list.push({
+        id: b.id + 10000,
+        busNumber: bNum,
+        routeName: b.route_name || 'IUBAT Transit Line',
+        driverName: b.active_assignment?.driver_name || 'Assigned Driver',
+        isLive: b.is_active && !!loc,
+        distanceKm: distKm,
+      });
+    });
+
+    return list;
+  }, [drivers, busesList, userPosition]);
+
+  // Determine active route and its stops for the selected or nearest bus
   const activeRoute = useMemo(() => {
     if (routes.length === 0) return null;
 
-    // Check if focused driver has a matching route
-    const activeDriver = focusedDriverId != null
-      ? drivers.find((d) => d.driver_id === focusedDriverId)
-      : drivers[0];
+    // Order of precedence:
+    // 1. Explicitly focused bus
+    // 2. Nearest bus to user
+    // 3. First available live driver or fleet bus
+    const effectiveBusId =
+      focusedDriverId ??
+      nearestBus?.id ??
+      (drivers[0]?.driver_id ?? (busesList[0]?.id ? busesList[0].id + 10000 : null));
 
-    if (activeDriver?.route_id) {
-      const rId = activeDriver.route_id;
-      const found = routes.find((r) => r.id === rId);
-      if (found) return found;
-    }
-    if (activeDriver?.route_name) {
-      const rName = activeDriver.route_name.toLowerCase().trim();
-      const found = routes.find((r) => r.name.toLowerCase().trim() === rName || r.name.toLowerCase().includes(rName));
-      if (found) return found;
-    }
-
-    // Check fleet bus matching focused id
-    if (focusedDriverId != null) {
-      const fleetBus = busesList.find((b) => b.id === focusedDriverId || b.id + 10000 === focusedDriverId);
-      if (fleetBus?.current_route) {
-        const rId = fleetBus.current_route;
-        const found = routes.find((r) => r.id === rId);
-        if (found) return found;
+    if (effectiveBusId != null) {
+      // Check active drivers
+      const activeDriver = drivers.find((d) => d.driver_id === effectiveBusId);
+      if (activeDriver) {
+        if (activeDriver.route_id) {
+          const found = routes.find((r) => r.id === activeDriver.route_id);
+          if (found) return found;
+        }
+        if (activeDriver.route_name) {
+          const rName = activeDriver.route_name.toLowerCase().trim();
+          const found = routes.find((r) => r.name.toLowerCase().trim() === rName || r.name.toLowerCase().includes(rName));
+          if (found) return found;
+        }
       }
-      if (fleetBus?.route_name) {
-        const rName = fleetBus.route_name.toLowerCase().trim();
-        const found = routes.find((r) => r.name.toLowerCase().trim() === rName || r.name.toLowerCase().includes(rName));
-        if (found) return found;
+
+      // Check fleet buses
+      const fleetBus = busesList.find((b) => b.id === effectiveBusId || b.id + 10000 === effectiveBusId);
+      if (fleetBus) {
+        if (fleetBus.current_route) {
+          const found = routes.find((r) => r.id === fleetBus.current_route);
+          if (found) return found;
+        }
+        if (fleetBus.route_name) {
+          const rName = fleetBus.route_name.toLowerCase().trim();
+          const found = routes.find((r) => r.name.toLowerCase().trim() === rName || r.name.toLowerCase().includes(rName));
+          if (found) return found;
+        }
       }
     }
 
     // Fallback: pick the first route with published geometry or stops
-    const routeWithGeo = routes.find((r) => (r.stops && r.stops.length > 0) || r.active_geometry);
+    const routeWithGeo = routes.find((r) => (r.active_geometry?.coordinates?.length || 0) > 0 || (r.stops && r.stops.length > 0));
     return routeWithGeo || routes[0];
-  }, [routes, focusedDriverId, drivers, busesList]);
+  }, [routes, focusedDriverId, nearestBus, drivers, busesList]);
 
   // Convert route stops to StopInfo[] and GeoJSON routePath
   const routeStops: StopInfo[] = useMemo(() => {
@@ -208,7 +330,57 @@ function LiveMapContent() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* 1. Bus Selector Dropdown */}
+          {allSelectableBuses.length > 0 && (
+            <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 shadow-sm">
+              <BusIcon className="w-4 h-4 text-cyan-600 shrink-0" />
+              <select
+                aria-label="Select Bus to Track"
+                value={focusedDriverId ?? nearestBus?.id ?? allSelectableBuses[0]?.id ?? ''}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  if (!isNaN(val)) {
+                    hasUserSelectedBusRef.current = true;
+                    setFocusedDriverId(val);
+                    setFollowingDriverId(val);
+                  }
+                }}
+                className="bg-transparent text-slate-800 text-xs sm:text-sm font-bold focus:outline-none cursor-pointer max-w-[180px] sm:max-w-[260px] truncate"
+              >
+                {allSelectableBuses.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.busNumber} ({b.routeName}) {b.distanceKm != null ? `• ${b.distanceKm.toFixed(1)}km` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* 2. Nearest Bus Shortcut Pill */}
+          {nearestBus && (
+            <button
+              type="button"
+              onClick={() => {
+                hasUserSelectedBusRef.current = true;
+                setFocusedDriverId(nearestBus.id);
+                setFollowingDriverId(nearestBus.id);
+              }}
+              title="Focus on the bus closest to your current location"
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold inline-flex items-center gap-1 border transition ${
+                focusedDriverId === nearestBus.id
+                  ? 'bg-cyan-500/20 text-cyan-900 border-cyan-400'
+                  : 'bg-white hover:bg-cyan-50 text-slate-700 border-slate-300'
+              }`}
+            >
+              <Navigation className="w-3.5 h-3.5 text-cyan-600" />
+              <span>Nearest: {nearestBus.busNumber}</span>
+              <span className="text-[10px] text-slate-500">
+                ({nearestBus.distMeters < 1000 ? `${Math.round(nearestBus.distMeters)}m` : `${(nearestBus.distMeters / 1000).toFixed(1)}km`})
+              </span>
+            </button>
+          )}
+
           {/* Cinematic Fullscreen Toggle */}
           <button
             type="button"
@@ -266,7 +438,11 @@ function LiveMapContent() {
             userPosition={userPosition}
             focusedDriverId={focusedDriverId}
             followingDriverId={followingDriverId}
-            onSelectDriver={(id) => setFocusedDriverId(id)}
+            onSelectDriver={(id) => {
+              hasUserSelectedBusRef.current = true;
+              setFocusedDriverId(id);
+              setFollowingDriverId(id);
+            }}
             heightClass={isCinematic ? 'h-[calc(100vh-180px)]' : 'h-[640px]'}
           />
         </div>
@@ -298,7 +474,11 @@ function LiveMapContent() {
                         <div key={d.driver_id} className="p-3 hover:bg-slate-50 space-y-2">
                           <button
                             type="button"
-                            onClick={() => setFocusedDriverId(d.driver_id)}
+                            onClick={() => {
+                              hasUserSelectedBusRef.current = true;
+                              setFocusedDriverId(d.driver_id);
+                              setFollowingDriverId(d.driver_id);
+                            }}
                             className="w-full text-left"
                           >
                             <div className="flex items-center justify-between">
@@ -317,9 +497,11 @@ function LiveMapContent() {
                           </button>
                           <button
                             type="button"
-                            onClick={() =>
-                              setFollowingDriverId(isFollowing ? null : d.driver_id)
-                            }
+                            onClick={() => {
+                              hasUserSelectedBusRef.current = true;
+                              setFollowingDriverId(isFollowing ? null : d.driver_id);
+                              setFocusedDriverId(d.driver_id);
+                            }}
                             className={`w-full py-1.5 rounded-lg text-xs font-semibold inline-flex items-center justify-center gap-1 transition ${
                               isFollowing
                                 ? 'bg-cyan-500 text-slate-950 font-bold shadow-md shadow-cyan-500/25'
@@ -346,7 +528,11 @@ function LiveMapContent() {
                         >
                           <button
                             type="button"
-                            onClick={() => setFocusedDriverId(b.id + 10000)}
+                            onClick={() => {
+                              hasUserSelectedBusRef.current = true;
+                              setFocusedDriverId(b.id + 10000);
+                              setFollowingDriverId(b.id + 10000);
+                            }}
                             className="w-full text-left"
                           >
                             <div className="flex items-center justify-between">

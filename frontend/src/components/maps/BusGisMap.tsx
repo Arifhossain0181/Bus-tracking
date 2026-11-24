@@ -227,10 +227,14 @@ export default function BusGisMap({
     return Math.max(1, Math.round(hours * 60));
   }, [userDistanceKm, selectedBus?.speed]);
 
-  // Open bus popup
+  const busesRef = useRef(buses);
+  busesRef.current = buses;
+
+  // Open bus popup and smoothly fly camera to selected bus
   const handleBusClick = useCallback(
     (bus: ActiveBusData) => {
       setSelectedBusId(bus.id);
+      setIsFollowing(true);
       onSelectBus?.(bus.id);
       setPopupBusData({
         id: bus.id,
@@ -245,27 +249,45 @@ export default function BusGisMap({
           (bus.speed && bus.speed > 1 ? 'moving' : bus.speed != null ? 'stopped' : 'live'),
         lastUpdated: bus.lastUpdated ? new Date(bus.lastUpdated).toLocaleTimeString() : 'Just now',
       });
+
+      const map = mapRef.current;
+      if (map && isValidCoordinate(bus.latitude, bus.longitude)) {
+        map.flyTo({
+          center: [bus.longitude, bus.latitude],
+          zoom: 16.5,
+          pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
+          duration: 1000,
+        });
+      }
     },
-    [onSelectBus]
+    [onSelectBus, is3DMode]
   );
 
-  // Sync selected bus from props or default to first bus
+  // Sync selected bus from props and fly to it, or default to first bus
   useEffect(() => {
     if (focusedBusId != null) {
       setSelectedBusId(focusedBusId);
+      const targetBus = buses.find((b) => b.id === focusedBusId);
+      if (targetBus && mapRef.current && isValidCoordinate(targetBus.latitude, targetBus.longitude)) {
+        mapRef.current.flyTo({
+          center: [targetBus.longitude, targetBus.latitude],
+          zoom: 16.5,
+          pitch: is3DMode ? ISOMETRIC_CAMERA_PITCH : DEFAULT_CAMERA_PITCH,
+          duration: 1000,
+        });
+      }
     } else if (selectedBusId == null && buses.length > 0) {
       setSelectedBusId(buses[0].id);
     }
-  }, [focusedBusId, buses, selectedBusId]);
+  }, [focusedBusId, buses, is3DMode]);
 
-  // Active planned route path
+  // Active planned route path - strictly authentic road geometry
   const activeRoadPath = useMemo(() => {
     if (roadGeometryProp && roadGeometryProp.length >= 2) return roadGeometryProp;
     if (routePath && routePath.length >= 2) return routePath;
-    if (stops && stops.length >= 2) return stops.map((s) => [s.longitude, s.latitude] as [number, number]);
-    // Do NOT fabricate fallback routes when geometry is unavailable
+    // Do NOT fabricate straight chord lines across the map when road geometry is unavailable
     return [] as [number, number][];
-  }, [roadGeometryProp, routePath, stops]);
+  }, [roadGeometryProp, routePath]);
 
   // Calculate route split (completed vs remaining), progress, current location, road heading, and next stop
   const routeMetrics = useMemo(() => {
@@ -703,6 +725,25 @@ export default function BusGisMap({
     map.on('touchstart', () => setIsFollowing(false));
     map.on('rotatestart', () => setIsFollowing(false));
     map.on('pitchstart', () => setIsFollowing(false));
+
+    // Click anywhere near a bus on the road to focus, select, and follow it
+    map.on('click', (e) => {
+      const { lng, lat } = e.lngLat;
+      let clickedBus: ActiveBusData | null = null;
+      let minDis = 80; // meters threshold around bus
+      busesRef.current.forEach((b) => {
+        if (isValidCoordinate(b.latitude, b.longitude)) {
+          const d = calculateDistanceMeters(lat, lng, b.latitude, b.longitude);
+          if (d < minDis) {
+            minDis = d;
+            clickedBus = b;
+          }
+        }
+      });
+      if (clickedBus) {
+        handleBusClick(clickedBus);
+      }
+    });
 
     mapRef.current = map;
 
