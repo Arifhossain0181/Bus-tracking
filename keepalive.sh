@@ -28,16 +28,12 @@ is_port_alive() {
   if netstat -tuln 2>/dev/null | grep -q ":$PORT "; then
     return 0
   fi
-  if fuser "$PORT/tcp" >/dev/null 2>&1; then
-    return 0
-  fi
   return 1
 }
 
 # 1. Check & Restart Backend (Django on 8000)
 if ! is_port_alive 8000; then
   echo "[$TIMESTAMP] [ALERT] Port 8000 (Django Backend) is down. Resurrecting..." >> "$LOG_DIR/keepalive.log"
-  fuser -k -9 8000/tcp 2>/dev/null || true
   pkill -9 -u dsriubatac -f "gunicorn.*core.wsgi" 2>/dev/null || true
   sleep 1
   cd "$BACKEND_DIR" || exit 1
@@ -55,12 +51,7 @@ fi
 # 2. Check & Restart Frontend (Next.js on 3000)
 if ! is_port_alive 3000; then
   echo "[$TIMESTAMP] [ALERT] Port 3000 (Next.js Frontend) is down. Resurrecting..." >> "$LOG_DIR/keepalive.log"
-  killall -9 -u dsriubatac node 2>/dev/null || true
   pkill -9 -u dsriubatac -f node 2>/dev/null || true
-  for P in $(lsof -ti:3000 2>/dev/null); do kill -9 "$P" 2>/dev/null || true; done
-  /usr/sbin/fuser -k -9 3000/tcp 2>/dev/null || true
-  /sbin/fuser -k -9 3000/tcp 2>/dev/null || true
-  fuser -k -9 3000/tcp 2>/dev/null || true
   sleep 1
   cd "$FRONTEND_DIR" || exit 1
   if [ -x "$NODE_EXEC" ] && [ -f "$FRONTEND_DIR/node_modules/next/dist/bin/next" ]; then

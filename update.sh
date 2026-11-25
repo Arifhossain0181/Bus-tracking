@@ -23,27 +23,19 @@ python manage.py collectstatic --noinput
 
 # 3. Frontend updates
 echo "[3/4] Updating Frontend (Dependencies & Rebuilding Next.js)..."
-# Unconditionally stop running node processes to release locks on .next directory
-killall -9 -u dsriubatac node 2>/dev/null || true
-pkill -9 -u dsriubatac -x node 2>/dev/null || true
+# Stop running frontend to release locks on .next directory
 pkill -9 -u dsriubatac -f node 2>/dev/null || true
-pkill -9 -u dsriubatac -f next 2>/dev/null || true
-pkill -9 -u dsriubatac -f npm 2>/dev/null || true
-for P in $(lsof -ti:3000 2>/dev/null); do kill -9 "$P" 2>/dev/null || true; done
-/usr/sbin/fuser -k -9 3000/tcp 2>/dev/null || true
-/sbin/fuser -k -9 3000/tcp 2>/dev/null || true
-fuser -k -9 3000/tcp 2>/dev/null || true
 sleep 1
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 cd /home/dsriubatac/Bus-tracking/frontend
-# Wipe stale cache and compiled chunks to guarantee fresh hash manifests
+echo "-> Purging stale build cache..."
 rm -rf .next
 if [ ! -d "node_modules" ]; then
-  echo "Installing frontend dependencies..."
+  echo "-> Installing frontend dependencies..."
   npm install --prefer-offline --no-audit --no-fund
 fi
-echo "Compiling Next.js production build..."
+echo "-> Compiling Next.js production build..."
 npm run build
 
 # 4. Restart services
