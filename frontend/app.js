@@ -4,7 +4,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const NEXT_PORT = 3000;
+const NEXT_PORT = 3005;
 const DJANGO_PORT = 8000;
 const NODE20_BIN = '/home/dsriubatac/.nvm/versions/node/v20.20.2/bin/node';
 const GUNICORN_BIN = '/home/dsriubatac/Bus-tracking/backend/venv/bin/gunicorn';

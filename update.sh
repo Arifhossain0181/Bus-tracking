@@ -45,16 +45,16 @@ RewriteRule ^admin/(.*)$ http://127.0.0.1:8000/admin/$1 [P,L,QSA]
 RewriteRule ^static/(.*)$ http://127.0.0.1:8000/static/$1 [P,L]
 RewriteRule ^django-static/(.*)$ http://127.0.0.1:8000/static/$1 [P,L]
 
-# 2. Next.js Frontend -> port 3000
-RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L,QSA]
+# 2. Next.js Frontend -> port 3005
+RewriteRule ^(.*)$ http://127.0.0.1:3005/$1 [P,L,QSA]
 EOF
   chmod 644 /home/dsriubatac/ubus.dsr.iubat.ac.bd/.htaccess
 fi
 
 # 4. Frontend updates
 echo "[3/4] Updating Frontend (Dependencies & Rebuilding Next.js)..."
-# Stop running frontend to release locks on .next directory
-for p in 3000 3001 8000; do
+# Stop running frontend on port 3005 and 8000
+for p in 3005 8000; do
   ss -lptn "sport = :$p" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | while read -r pid; do
     [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null || true
   done

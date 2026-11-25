@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # UBus Production Background Keepalive & Auto-Recovery Watchdog
-# Runs via cron every minute: checks ports 8000 and 3000, restarts if dead.
+# Runs via cron every minute: checks ports 8000 and 3005, restarts if dead.
 # Because this runs under crond, closing terminal windows CANNOT terminate it.
 # ==============================================================================
 
@@ -56,10 +56,10 @@ if ! is_port_alive 8000; then
   echo "[$TIMESTAMP] Django Backend resurrection dispatched." >> "$LOG_DIR/keepalive.log"
 fi
 
-# 2. Check & Restart Frontend (Next.js on 3000)
-if ! is_port_alive 3000; then
-  echo "[$TIMESTAMP] [ALERT] Port 3000 (Next.js Frontend) is down. Resurrecting..." >> "$LOG_DIR/keepalive.log"
-  ss -lptn "sport = :3000" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | while read -r pid; do
+# 2. Check & Restart Frontend (Next.js on 3005)
+if ! is_port_alive 3005; then
+  echo "[$TIMESTAMP] [ALERT] Port 3005 (Next.js Frontend) is down. Resurrecting..." >> "$LOG_DIR/keepalive.log"
+  ss -lptn "sport = :3005" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | while read -r pid; do
     [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null || true
   done
   pkill -9 -u "$(whoami)" -f node 2>/dev/null || true
@@ -67,15 +67,15 @@ if ! is_port_alive 3000; then
   cd "$FRONTEND_DIR" || exit 1
   if [ -x "$NODE_EXEC" ] && [ -f "$FRONTEND_DIR/node_modules/next/dist/bin/next" ]; then
     if command -v setsid >/dev/null 2>&1; then
-      setsid "$NODE_EXEC" "$FRONTEND_DIR/node_modules/next/dist/bin/next" start -p 3000 </dev/null >> "$LOG_DIR/frontend.log" 2>&1 &
+      setsid "$NODE_EXEC" "$FRONTEND_DIR/node_modules/next/dist/bin/next" start -p 3005 </dev/null >> "$LOG_DIR/frontend.log" 2>&1 &
     else
-      nohup "$NODE_EXEC" "$FRONTEND_DIR/node_modules/next/dist/bin/next" start -p 3000 </dev/null >> "$LOG_DIR/frontend.log" 2>&1 &
+      nohup "$NODE_EXEC" "$FRONTEND_DIR/node_modules/next/dist/bin/next" start -p 3005 </dev/null >> "$LOG_DIR/frontend.log" 2>&1 &
     fi
   else
     if command -v setsid >/dev/null 2>&1; then
-      setsid npm run start -- -p 3000 </dev/null >> "$LOG_DIR/frontend.log" 2>&1 &
+      setsid npm run start -- -p 3005 </dev/null >> "$LOG_DIR/frontend.log" 2>&1 &
     else
-      nohup npm run start -- -p 3000 </dev/null >> "$LOG_DIR/frontend.log" 2>&1 &
+      nohup npm run start -- -p 3005 </dev/null >> "$LOG_DIR/frontend.log" 2>&1 &
     fi
   fi
   disown -h -a 2>/dev/null || true
@@ -91,7 +91,7 @@ if ! is_port_alive 3000; then
   touch /home/dsriubatac/Bus-tracking/tmp/restart.txt 2>/dev/null || true
 fi
 
-# 3. Ensure Apache .htaccess is clean and points to ports 8000 and 3000
+# 3. Ensure Apache .htaccess is clean and points to ports 8000 and 3005
 if [ -d "/home/dsriubatac/ubus.dsr.iubat.ac.bd" ]; then
   cat << 'EOF' > /home/dsriubatac/ubus.dsr.iubat.ac.bd/.htaccess
 DirectoryIndex disabled
@@ -104,8 +104,8 @@ RewriteRule ^admin/(.*)$ http://127.0.0.1:8000/admin/$1 [P,L,QSA]
 RewriteRule ^static/(.*)$ http://127.0.0.1:8000/static/$1 [P,L]
 RewriteRule ^django-static/(.*)$ http://127.0.0.1:8000/static/$1 [P,L]
 
-# 2. Next.js Frontend -> port 3000
-RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L,QSA]
+# 2. Next.js Frontend -> port 3005
+RewriteRule ^(.*)$ http://127.0.0.1:3005/$1 [P,L,QSA]
 EOF
   chmod 644 /home/dsriubatac/ubus.dsr.iubat.ac.bd/.htaccess
 fi

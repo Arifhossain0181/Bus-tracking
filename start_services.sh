@@ -3,10 +3,10 @@
 # UBus Production Background Service Runner (Detached & Immune to Terminal Close)
 # ==============================================================================
 
-echo "Stopping existing services on ports 8000, 3000, and 3001..."
+echo "Stopping existing services on ports 8000 and 3005..."
 
 # 1. Kill old processes cleanly by port and user process table
-for p in 3000 3001 8000; do
+for p in 3005 8000; do
   ss -lptn "sport = :$p" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | while read -r pid; do
     [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null || true
   done
@@ -34,8 +34,8 @@ RewriteRule ^admin/(.*)$ http://127.0.0.1:8000/admin/$1 [P,L,QSA]
 RewriteRule ^static/(.*)$ http://127.0.0.1:8000/static/$1 [P,L]
 RewriteRule ^django-static/(.*)$ http://127.0.0.1:8000/static/$1 [P,L]
 
-# 2. Next.js Frontend -> port 3000
-RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L,QSA]
+# 2. Next.js Frontend -> port 3005
+RewriteRule ^(.*)$ http://127.0.0.1:3005/$1 [P,L,QSA]
 EOF
   chmod 644 /home/dsriubatac/ubus.dsr.iubat.ac.bd/.htaccess
 fi
@@ -54,8 +54,8 @@ fi
 disown -h -a 2>/dev/null || true
 disown -a 2>/dev/null || true
 
-# 3. Start Next.js Frontend on 127.0.0.1:3000
-echo "Starting Next.js Frontend on 127.0.0.1:3000..."
+# 3. Start Next.js Frontend on 127.0.0.1:3005
+echo "Starting Next.js Frontend on 127.0.0.1:3005..."
 cd /home/dsriubatac/Bus-tracking/frontend
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
@@ -63,15 +63,15 @@ NODE_EXEC=$(which node 2>/dev/null || echo "/home/dsriubatac/.nvm/versions/node/
 
 if [ -x "$NODE_EXEC" ] && [ -f "node_modules/next/dist/bin/next" ]; then
   if command -v setsid >/dev/null 2>&1; then
-    setsid "$NODE_EXEC" node_modules/next/dist/bin/next start -p 3000 </dev/null >> /home/dsriubatac/frontend.log 2>&1 &
+    setsid "$NODE_EXEC" node_modules/next/dist/bin/next start -p 3005 </dev/null >> /home/dsriubatac/frontend.log 2>&1 &
   else
-    nohup "$NODE_EXEC" node_modules/next/dist/bin/next start -p 3000 </dev/null >> /home/dsriubatac/frontend.log 2>&1 &
+    nohup "$NODE_EXEC" node_modules/next/dist/bin/next start -p 3005 </dev/null >> /home/dsriubatac/frontend.log 2>&1 &
   fi
 else
   if command -v setsid >/dev/null 2>&1; then
-    setsid npm run start -- -p 3000 </dev/null >> /home/dsriubatac/frontend.log 2>&1 &
+    setsid npm run start -- -p 3005 </dev/null >> /home/dsriubatac/frontend.log 2>&1 &
   else
-    nohup npm run start -- -p 3000 </dev/null >> /home/dsriubatac/frontend.log 2>&1 &
+    nohup npm run start -- -p 3005 </dev/null >> /home/dsriubatac/frontend.log 2>&1 &
   fi
 fi
 disown -h -a 2>/dev/null || true
@@ -94,13 +94,13 @@ echo "Keepalive cron registered. Crontab is active."
 
 sleep 3
 echo "=== Service Status Check ==="
-FRONTEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/ || echo "DOWN")
-BACKEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/api/ || echo "DOWN")
+FRONTEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3005/ || echo "DOWN")
+BACKEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/ || echo "DOWN")
 echo "Local Backend HTTP status: $BACKEND_STATUS"
 echo "Local Frontend HTTP status: $FRONTEND_STATUS"
 if [ "$FRONTEND_STATUS" = "DOWN" ] || [ "$FRONTEND_STATUS" = "000" ]; then
   echo "[WARNING] Frontend failed to respond! Last log entries from frontend.log:"
   tail -n 20 /home/dsriubatac/frontend.log || true
 fi
-ss -tulpn 2>/dev/null | grep -E "8000|3000" || netstat -tulnp 2>/dev/null | grep -E "8000|3000" || true
+ss -tulpn 2>/dev/null | grep -E "8000|3005" || netstat -tulnp 2>/dev/null | grep -E "8000|3005" || true
 echo "Services started and armed with 24/7 background cron watchdog!"
