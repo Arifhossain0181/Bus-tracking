@@ -39,7 +39,11 @@ export NVM_DIR="$HOME/.nvm"
 cd /home/dsriubatac/Bus-tracking/frontend
 # Wipe stale cache and compiled chunks to guarantee fresh hash manifests
 rm -rf .next
-npm install --silent
+if [ ! -d "node_modules" ]; then
+  echo "Installing frontend dependencies..."
+  npm install --prefer-offline --no-audit --no-fund
+fi
+echo "Compiling Next.js production build..."
 npm run build
 
 # 4. Restart services
