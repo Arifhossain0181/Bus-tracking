@@ -5,23 +5,45 @@
 
 echo "Stopping existing services on ports 8000 and 3000..."
 
-# 1. Kill old processes on ports 8000 and 3000 with multiple methods
-fuser -k -9 8000/tcp 2>/dev/null || true
-fuser -k -9 3000/tcp 2>/dev/null || true
+# 1. Kill old processes unconditionally by user process name and socket bindings
+killall -9 -u dsriubatac node 2>/dev/null || true
+pkill -9 -u dsriubatac -x node 2>/dev/null || true
+pkill -9 -u dsriubatac -f node 2>/dev/null || true
+pkill -9 -u dsriubatac -f npm 2>/dev/null || true
+pkill -9 -u dsriubatac -f next 2>/dev/null || true
 pkill -9 -u dsriubatac -f "gunicorn.*core.wsgi" 2>/dev/null || true
-pkill -9 -u dsriubatac -f "next-server" 2>/dev/null || true
-pkill -9 -u dsriubatac -f "node.*next" 2>/dev/null || true
+pkill -9 -u dsriubatac -f gunicorn 2>/dev/null || true
+
+# Kill any process holding port 3000 or 8000 via lsof / fuser
+for P in $(lsof -ti:3000 2>/dev/null); do kill -9 "$P" 2>/dev/null || true; done
+for P in $(lsof -ti:8000 2>/dev/null); do kill -9 "$P" 2>/dev/null || true; done
+/usr/sbin/fuser -k -9 3000/tcp 2>/dev/null || true
+/sbin/fuser -k -9 3000/tcp 2>/dev/null || true
+fuser -k -9 3000/tcp 2>/dev/null || true
+/usr/sbin/fuser -k -9 8000/tcp 2>/dev/null || true
+/sbin/fuser -k -9 8000/tcp 2>/dev/null || true
+fuser -k -9 8000/tcp 2>/dev/null || true
 sleep 2
 
-# Verify ports are free
-for PORT in 8000 3000; do
-  PID=$(ss -tulpn 2>/dev/null | grep ":$PORT " | awk '{print $NF}' | sed -E 's/.*pid=([0-9]+).*/\1/' || true)
-  if [ -n "$PID" ] && [ "$PID" -gt 0 ] 2>/dev/null; then
-    echo "Force killing remaining process $PID on port $PORT..."
-    kill -9 "$PID" 2>/dev/null || true
+# Verify port 3000 and 8000 are completely free before launching new services
+echo "Verifying ports 8000 and 3000 are completely released..."
+for i in {1..8}; do
+  PORT_3000_BUSY=0
+  PORT_8000_BUSY=0
+  if curl -s -m 1 http://127.0.0.1:3000/ >/dev/null 2>&1; then PORT_3000_BUSY=1; fi
+  if curl -s -m 1 http://127.0.0.1:8000/ >/dev/null 2>&1; then PORT_8000_BUSY=1; fi
+  if [ "$PORT_3000_BUSY" -eq 0 ] && [ "$PORT_8000_BUSY" -eq 0 ]; then
+    echo "Ports 8000 and 3000 are clean and free."
+    break
   fi
+  echo "Lingering process detected on 3000/8000, forcing kill (attempt $i)..."
+  killall -9 -u dsriubatac node 2>/dev/null || true
+  pkill -9 -u dsriubatac -f node 2>/dev/null || true
+  pkill -9 -u dsriubatac -f gunicorn 2>/dev/null || true
+  for P in $(lsof -ti:3000 2>/dev/null); do kill -9 "$P" 2>/dev/null || true; done
+  for P in $(lsof -ti:8000 2>/dev/null); do kill -9 "$P" 2>/dev/null || true; done
+  sleep 1
 done
-sleep 1
 
 # Ensure Apache .htaccess is clean and points to ports 8000 and 3000
 if [ -d "/home/dsriubatac/ubus.dsr.iubat.ac.bd" ]; then
@@ -81,5 +103,13 @@ echo "Keepalive cron registered. Crontab is active."
 
 sleep 3
 echo "=== Service Status Check ==="
+FRONTEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/ || echo "DOWN")
+BACKEND_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/api/ || echo "DOWN")
+echo "Local Backend HTTP status: $BACKEND_STATUS"
+echo "Local Frontend HTTP status: $FRONTEND_STATUS"
+if [ "$FRONTEND_STATUS" = "DOWN" ] || [ "$FRONTEND_STATUS" = "000" ]; then
+  echo "[WARNING] Frontend failed to respond! Last log entries from frontend.log:"
+  tail -n 20 /home/dsriubatac/frontend.log || true
+fi
 ss -tulpn 2>/dev/null | grep -E "8000|3000" || netstat -tulnp 2>/dev/null | grep -E "8000|3000" || true
 echo "Services started and armed with 24/7 background cron watchdog!"
