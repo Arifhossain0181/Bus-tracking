@@ -13,6 +13,9 @@ const geistMono = Geist_Mono({
   subsets: ['latin'],
 });
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export const metadata: Metadata = {
   title: 'UBus - University Bus Tracking & Management System',
   description: 'Real-time university bus tracking, route scheduling, and fleet management system.',
