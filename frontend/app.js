@@ -4,7 +4,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const NEXT_PORT = 3001;
+const NEXT_PORT = 3000;
 const DJANGO_PORT = 8000;
 const NODE20_BIN = '/home/dsriubatac/.nvm/versions/node/v20.20.2/bin/node';
 const GUNICORN_BIN = '/home/dsriubatac/Bus-tracking/backend/venv/bin/gunicorn';
@@ -21,6 +21,16 @@ function log(msg) {
   console.log(msg);
 }
 
+function checkPort(port, callback) {
+  const s = net.createConnection({ port, host: '127.0.0.1' }, () => {
+    s.end();
+    callback(true);
+  });
+  s.on('error', () => {
+    callback(false);
+  });
+}
+
 log('[UBus Master Gateway] Booting process under Passenger...');
 
 let nextProc = null;
@@ -28,61 +38,72 @@ let djangoProc = null;
 
 function startDjango() {
   if (djangoProc) return;
-  log(`[UBus Master] Starting Django Gunicorn on port ${DJANGO_PORT}...`);
-  
-  const gunicornPath = fs.existsSync(GUNICORN_BIN) ? GUNICORN_BIN : 'gunicorn';
-  djangoProc = spawn(gunicornPath, [
-    'core.wsgi:application',
-    '--bind', `127.0.0.1:${DJANGO_PORT}`,
-    '--workers', '2'
-  ], {
-    cwd: BACKEND_DIR,
-    env: {
-      ...process.env,
-      PATH: '/home/dsriubatac/Bus-tracking/backend/venv/bin:' + (process.env.PATH || '')
+  checkPort(DJANGO_PORT, (alive) => {
+    if (alive) {
+      log(`[UBus Master] Port ${DJANGO_PORT} is already listening. Using existing Django instance.`);
+      return;
     }
-  });
+    log(`[UBus Master] Starting Django Gunicorn on port ${DJANGO_PORT}...`);
+    const gunicornPath = fs.existsSync(GUNICORN_BIN) ? GUNICORN_BIN : 'gunicorn';
+    djangoProc = spawn(gunicornPath, [
+      'core.wsgi:application',
+      '--bind', `127.0.0.1:${DJANGO_PORT}`,
+      '--workers', '2'
+    ], {
+      cwd: BACKEND_DIR,
+      env: {
+        ...process.env,
+        PATH: '/home/dsriubatac/Bus-tracking/backend/venv/bin:' + (process.env.PATH || '')
+      }
+    });
 
-  djangoProc.stdout.on('data', (d) => log(`[Django] ${d.toString().trim()}`));
-  djangoProc.stderr.on('data', (d) => log(`[Django ERR] ${d.toString().trim()}`));
-  djangoProc.on('exit', (code, sig) => {
-    log(`[UBus Master] Django exited (code: ${code}, sig: ${sig}), restarting in 3s...`);
-    djangoProc = null;
-    setTimeout(startDjango, 3000);
+    djangoProc.stdout.on('data', (d) => log(`[Django] ${d.toString().trim()}`));
+    djangoProc.stderr.on('data', (d) => log(`[Django ERR] ${d.toString().trim()}`));
+    djangoProc.on('exit', (code, sig) => {
+      log(`[UBus Master] Django exited (code: ${code}, sig: ${sig}), restarting in 3s...`);
+      djangoProc = null;
+      setTimeout(startDjango, 3000);
+    });
   });
 }
 
 function startNext() {
   if (nextProc) return;
-  log(`[UBus Master] Starting Next.js (Node 20) on port ${NEXT_PORT}...`);
-
-  const nodeBin = fs.existsSync(NODE20_BIN) ? NODE20_BIN : process.execPath;
-  const nextCli = path.join(FRONTEND_DIR, 'node_modules/next/dist/bin/next');
-
-  nextProc = spawn(nodeBin, [
-    nextCli,
-    'start',
-    '-p', String(NEXT_PORT),
-    '-H', '127.0.0.1'
-  ], {
-    cwd: FRONTEND_DIR,
-    env: {
-      ...process.env,
-      PORT: String(NEXT_PORT),
-      NODE_ENV: 'production'
+  checkPort(NEXT_PORT, (alive) => {
+    if (alive) {
+      log(`[UBus Master] Port ${NEXT_PORT} is already listening. Using existing Next.js instance.`);
+      return;
     }
-  });
+    log(`[UBus Master] Starting Next.js (Node 20) on port ${NEXT_PORT}...`);
 
-  nextProc.stdout.on('data', (d) => log(`[Next] ${d.toString().trim()}`));
-  nextProc.stderr.on('data', (d) => log(`[Next ERR] ${d.toString().trim()}`));
-  nextProc.on('exit', (code, sig) => {
-    log(`[UBus Master] Next.js exited (code: ${code}, sig: ${sig}), restarting in 3s...`);
-    nextProc = null;
-    setTimeout(startNext, 3000);
+    const nodeBin = fs.existsSync(NODE20_BIN) ? NODE20_BIN : process.execPath;
+    const nextCli = path.join(FRONTEND_DIR, 'node_modules/next/dist/bin/next');
+
+    nextProc = spawn(nodeBin, [
+      nextCli,
+      'start',
+      '-p', String(NEXT_PORT),
+      '-H', '127.0.0.1'
+    ], {
+      cwd: FRONTEND_DIR,
+      env: {
+        ...process.env,
+        PORT: String(NEXT_PORT),
+        NODE_ENV: 'production'
+      }
+    });
+
+    nextProc.stdout.on('data', (d) => log(`[Next] ${d.toString().trim()}`));
+    nextProc.stderr.on('data', (d) => log(`[Next ERR] ${d.toString().trim()}`));
+    nextProc.on('exit', (code, sig) => {
+      log(`[UBus Master] Next.js exited (code: ${code}, sig: ${sig}), restarting in 3s...`);
+      nextProc = null;
+      setTimeout(startNext, 3000);
+    });
   });
 }
 
-// Start backend services
+// Start backend services if not already alive
 startDjango();
 startNext();
 
@@ -105,8 +126,8 @@ const server = http.createServer((req, res) => {
   const url = req.url || '/';
   const isBackend = url.startsWith('/api/') ||
                     url.startsWith('/admin') ||
-                    url.startsWith('/static/admin') ||
-                    url.startsWith('/static/rest_framework');
+                    url.startsWith('/static/') ||
+                    url.startsWith('/django-static/');
 
   const targetPort = isBackend ? DJANGO_PORT : NEXT_PORT;
 
@@ -131,7 +152,7 @@ const server = http.createServer((req, res) => {
   proxyReq.on('error', (err) => {
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end('UBus Transit Gateway: সার্ভিস চালু হচ্ছে, অনুগ্রহ করে কয়েক সেকেন্ড পর পেজটি রিফ্রেশ দিন...');
+      res.end('UBus Transit Gateway: Services are starting up, please refresh in a few seconds...');
     }
   });
 
@@ -163,5 +184,5 @@ server.on('upgrade', (req, socket, head) => {
 if (typeof(PhusionPassenger) !== 'undefined') {
   server.listen('passenger');
 } else {
-  server.listen(process.env.PORT || 3000);
+  server.listen(process.env.PORT || 3001);
 }

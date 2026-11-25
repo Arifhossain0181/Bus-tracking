@@ -3,21 +3,38 @@
 # UBus Production Background Service Runner (Detached & Immune to Terminal Close)
 # ==============================================================================
 
-echo "Stopping existing services on ports 8000 and 3000..."
+echo "Stopping existing services on ports 8000, 3000, and 3001..."
 
-# 1. Kill old processes cleanly by user process table
-pkill -9 -u dsriubatac -f node 2>/dev/null || true
-pkill -9 -u dsriubatac -f gunicorn 2>/dev/null || true
-pkill -9 -u dsriubatac -f "next-server" 2>/dev/null || true
+# 1. Kill old processes cleanly by port and user process table
+for p in 3000 3001 8000; do
+  ss -lptn "sport = :$p" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | while read -r pid; do
+    [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null || true
+  done
+done
+pkill -9 -u "$(whoami)" -f node 2>/dev/null || true
+pkill -9 -u "$(whoami)" -f gunicorn 2>/dev/null || true
+pkill -9 -u "$(whoami)" -f "next-server" 2>/dev/null || true
 sleep 1
 
-# Ensure Apache .htaccess is clean and points to ports 8000 and 3000
+# Ensure Apache DocumentRoot is clean of stale static files and .htaccess is active
 if [ -d "/home/dsriubatac/ubus.dsr.iubat.ac.bd" ]; then
+  rm -f /home/dsriubatac/ubus.dsr.iubat.ac.bd/index.html
+  rm -f /home/dsriubatac/ubus.dsr.iubat.ac.bd/index.htm
+  rm -rf /home/dsriubatac/ubus.dsr.iubat.ac.bd/_next
+  rm -rf /home/dsriubatac/ubus.dsr.iubat.ac.bd/.next
+
   cat << 'EOF' > /home/dsriubatac/ubus.dsr.iubat.ac.bd/.htaccess
+DirectoryIndex disabled
 RewriteEngine On
+RewriteBase /
+
+# 1. Django API, Admin & Static -> port 8000
 RewriteRule ^api/(.*)$ http://127.0.0.1:8000/api/$1 [P,L,QSA]
 RewriteRule ^admin/(.*)$ http://127.0.0.1:8000/admin/$1 [P,L,QSA]
+RewriteRule ^static/(.*)$ http://127.0.0.1:8000/static/$1 [P,L]
 RewriteRule ^django-static/(.*)$ http://127.0.0.1:8000/static/$1 [P,L]
+
+# 2. Next.js Frontend -> port 3000
 RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L,QSA]
 EOF
   chmod 644 /home/dsriubatac/ubus.dsr.iubat.ac.bd/.htaccess
@@ -59,6 +76,14 @@ else
 fi
 disown -h -a 2>/dev/null || true
 disown -a 2>/dev/null || true
+
+# Touch Passenger restart files
+mkdir -p /home/dsriubatac/Bus-tracking/frontend/tmp 2>/dev/null || true
+touch /home/dsriubatac/Bus-tracking/frontend/tmp/restart.txt 2>/dev/null || true
+mkdir -p /home/dsriubatac/ubus.dsr.iubat.ac.bd/tmp 2>/dev/null || true
+touch /home/dsriubatac/ubus.dsr.iubat.ac.bd/tmp/restart.txt 2>/dev/null || true
+mkdir -p /home/dsriubatac/Bus-tracking/tmp 2>/dev/null || true
+touch /home/dsriubatac/Bus-tracking/tmp/restart.txt 2>/dev/null || true
 
 # 4. Auto-register cron watchdog so services NEVER die on terminal disconnect or reboot
 echo "Registering Keepalive Cron Watchdog in crontab..."
